@@ -180,3 +180,4 @@ pytest -v tests/test_totk_ps5_project.py
 - **PS5 Homebrew Toolchain & Mesa RADV PS5:** PS5 homebrew & `ps5-kit` / Mesa RADV contributors.
 - **AMD FidelityFX SDK 1.1.4 (FSR 3.1.5):** Advanced Micro Devices, Inc. (MIT).
 - **License:** Released under the **MIT License** — see [LICENSE](LICENSE).
+- **Legal notice / Aviso legal:** see [NOTICE](NOTICE) — zero Nintendo data, keys or ROMs included; bring your own legal dump.
