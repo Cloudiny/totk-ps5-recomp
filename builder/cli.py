@@ -28,20 +28,44 @@ from .pipeline import (
 )
 
 
-def extract_single_game_file(paths, game_file: Path, keys_file: Path | None, work_dir: Path) -> tuple[Path, Path]:
-    """Extract a single .xci/.nsp game archive into work_dir/extracted/{exefs,romfs}."""
+def extract_single_game_file(
+    paths,
+    game_file: Path,
+    keys_file: Path | None,
+    work_dir: Path,
+    update_file: Path | None = None,
+) -> tuple[Path, Path]:
+    """Extract a .xci/.nsp base game (and optional update .nsp) into work_dir/extracted/v*/{exefs,romfs}."""
     extract_py = paths.totk_tools_dir / "extract.py"
     if not extract_py.is_file():
         raise FileNotFoundError(f"Extractor script missing: {extract_py}")
     if not game_file.is_file():
         raise FileNotFoundError(f"Game file not found: {game_file}")
-    out_ex = work_dir / "extracted"
-    cmd = [str(paths.python_bin), str(extract_py), str(game_file), "--out", str(out_ex)]
-    if keys_file and keys_file.is_file():
-        cmd += ["--keys", str(keys_file)]
-    print(f"[ps5-totk] Extracting {game_file.name} -> {out_ex}...")
+    if not keys_file or not keys_file.is_file():
+        raise FileNotFoundError("Switch prod.keys (--keys) is required to extract .xci/.nsp game files")
+    cmd = [
+        str(paths.python_bin),
+        str(extract_py),
+        "--base",
+        str(game_file),
+        "--keys",
+        str(keys_file),
+        "--work",
+        str(work_dir),
+    ]
+    if update_file and update_file.is_file():
+        cmd += ["--update", str(update_file)]
+    hactool = paths.totk_tools_dir.parent / "toolchain" / "hactool" / "hactool"
+    if hactool.is_file():
+        cmd += ["--hactool", str(hactool)]
+    print(f"[ps5-totk] Extracting {game_file.name} -> {work_dir / 'extracted'}...")
     subprocess.run(cmd, check=True)
-    return out_ex / "exefs", out_ex / "romfs"
+    ex_root = work_dir / "extracted"
+    for ver in ("v143", "v121", "v112", "v110", "v0"):
+        cand = ex_root / ver
+        if (cand / "exefs" / "main").is_file() and (cand / "romfs" / "romfs.bin").is_file():
+            return cand / "exefs", cand / "romfs"
+    raise FileNotFoundError(f"Extraction finished but no valid exefs/romfs found under {ex_root}")
 
 
 def run_check(paths) -> int:
@@ -65,7 +89,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true", help="Verify kit & toolchain")
     parser.add_argument("--show-layout", action="store_true", help="Print exact PS5 directory layout")
     parser.add_argument("--build-runtime-lib", action="store_true", help="Build reusable libtotkrt_ps5.a only")
-    parser.add_argument("--game", type=Path, default=None, help="Single TOTK game file (.xci / .nsp)")
+    parser.add_argument("--game", type=Path, default=None, help="Base TOTK game file (.xci / .nsp)")
+    parser.add_argument("--update", type=Path, default=None, help="Optional TOTK update file (.nsp, e.g. v1.4.3)")
     parser.add_argument("--keys", type=Path, default=None, help="Switch prod.keys (for --game)")
     parser.add_argument("--exefs", type=Path, default=None, help="Extracted ExeFS directory")
     parser.add_argument("--romfs", type=Path, default=None, help="Extracted RomFS directory")
@@ -91,9 +116,9 @@ def main(argv: list[str] | None = None) -> int:
         help="RomFS mod folder or .zip archive to stage into /data/totk-ps5/mods/ (repeatable)",
     )
     parser.add_argument("--res", default="2560x1440", help="Default PS5 output resolution (default: 2560x1440)")
-    parser.add_argument("--hz", type=int, default=60, choices=(60, 120), help="Default PS5 display refresh rate (60 or 120 Hz)")
-    parser.add_argument("--frame-gen", default="off", choices=("off", "fsr3"), help="Default AMD FSR 3.1.5 Frame Generation mode (off or fsr3)")
-    parser.add_argument("--scale", default="100", help="Default 3D render scale (default: 100)")
+    parser.add_argument("--hz", type=int, default=120, choices=(60, 120), help="Default PS5 display refresh rate (60 or 120 Hz)")
+    parser.add_argument("--frame-gen", default="fsr3", choices=("off", "fsr3"), help="Default AMD FSR 3.1.5 Frame Generation mode (off or fsr3)")
+    parser.add_argument("--scale", default="game", help="Default 3D render scale (default: game)")
     parser.add_argument("--lang", default="es-419", help="Default game language (default: es-419)")
     parser.add_argument("--work", type=Path, default=None, help="Working build directory")
     parser.add_argument("--out", type=Path, default=None, help="Output directory (receives PPSA99199/ & data_totk_ps5/)")
@@ -133,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.deploy_only:
         if args.game:
-            exefs_dir, romfs_dir = extract_single_game_file(paths, args.game, args.keys, work_dir)
+            exefs_dir, romfs_dir = extract_single_game_file(paths, args.game, args.keys, work_dir, args.update)
         if not exefs_dir:
             parser.error("Provide --game <totk.xci|nsp> or --exefs <dir> (or --deploy-only)")
 

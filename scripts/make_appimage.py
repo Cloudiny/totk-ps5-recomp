@@ -88,17 +88,17 @@ def stage_appdir() -> Path:
     (bundle / "ps5").mkdir(parents=True, exist_ok=True)
     shutil.copy2(PROJECT_ROOT / "ps5" / "ps5-totk.ld", bundle / "ps5" / "ps5-totk.ld")
 
-    # 4b. Optional host Linux shader pre-translation binaries (game-free totk + totk_xlate)
-    linux_rt = Path("/home/saul/Games/Hyrule/TOTK/totk-runtime")
-    if (linux_rt / "totk").is_file() and (linux_rt / "totk_xlate").is_file():
+    # 4b. Host Linux shader pre-translation tools (100% game-free: prep_mvprev + totk_xlate with mvprev patch 0015)
+    xlate_dir = PROJECT_ROOT / "build" / "xlate_mvprev"
+    if (xlate_dir / "prep_mvprev").is_file() and (xlate_dir / "totk_xlate").is_file():
         lt_dst = bundle / "linux-tools"
         lt_dst.mkdir(parents=True, exist_ok=True)
-        for bname in ("totk", "totk_xlate", "totk_xlate.id"):
-            src_b = linux_rt / bname
+        for bname in ("prep_mvprev", "totk_xlate", "totk_xlate.id"):
+            src_b = xlate_dir / bname
             if src_b.is_file():
                 shutil.copy2(src_b, lt_dst / bname)
 
-    # 5. TOTK lifter (recomp/), minimal tools/, and runtime headers + 7 install-side .c files
+    # 5. TOTK lifter (recomp/), minimal tools/ (+ vendor/macnativegames + hactool for .xci/.nsp), and runtime headers
     totk_dst = bundle / "totk-src"
     copy_clean_tree(
         TOTK_SRC / "recomp",
@@ -126,6 +126,17 @@ def stage_appdir() -> Path:
             shutil.copy2(src_t, tools_dst / tname)
     if (TOTK_SRC / "tools" / "data").is_dir():
         copy_clean_tree(TOTK_SRC / "tools" / "data", tools_dst / "data")
+    if (TOTK_SRC / "tools" / "vendor" / "macnativegames").is_dir():
+        copy_clean_tree(
+            TOTK_SRC / "tools" / "vendor" / "macnativegames",
+            tools_dst / "vendor" / "macnativegames",
+            ignore_fn=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+    hactool_bin = PROJECT_ROOT / "build" / "hactool" / "hactool"
+    if hactool_bin.is_file():
+        ht_dst = totk_dst / "toolchain" / "hactool"
+        ht_dst.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(hactool_bin, ht_dst / "hactool")
 
     rt_dst = totk_dst / "runtime"
     rt_dst.mkdir(parents=True)

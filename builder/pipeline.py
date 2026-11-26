@@ -427,30 +427,44 @@ def pretranslate_ps5_shaders(
     if (sc_out / "shader-cache.pack").is_file() and (data_out / "shader-prepared.bin").is_file():
         return xlate_id
 
-    # Otherwise, run full PC-side pre-translation targeting PS5 RADV (TOTK_ZERO_LOCALS=0)
+    # Otherwise, run full PC-side pre-translation targeting PS5 RADV (TOTK_ZERO_LOCALS=0 + mvprev)
     prep_py = paths.totk_tools_dir / "prepare_shaders.py"
     pack_py = paths.totk_tools_dir / "pack_shader_cache.py"
-    linux_totk = None
-    for cand in (
-        paths.project_root / "kit_bundle" / "linux-tools" / "totk",
-        Path("/home/saul/Games/Hyrule/TOTK/totk-runtime/totk"),
-        paths.totk_tools_dir.parent / "build" / ver_tag / "totk",
+
+    prep_mvprev = None
+    totk_xlate = None
+    for d in (
+        paths.project_root / "kit_bundle" / "linux-tools",
+        paths.project_root / "build" / "xlate_mvprev",
     ):
-        if cand.is_file():
-            linux_totk = cand
+        if (d / "prep_mvprev").is_file() and (d / "totk_xlate").is_file():
+            prep_mvprev = d / "prep_mvprev"
+            totk_xlate = d / "totk_xlate"
             break
 
-    if not romfs_dir or not prep_py.is_file() or not pack_py.is_file() or not linux_totk:
+    linux_totk = None
+    if not prep_mvprev:
+        for cand in (
+            paths.project_root / "kit_bundle" / "linux-tools" / "totk",
+            Path("/home/saul/Games/Hyrule/TOTK/totk-runtime/totk"),
+            paths.totk_tools_dir.parent / "build" / ver_tag / "totk",
+        ):
+            if cand.is_file():
+                linux_totk = cand
+                break
+
+    if not romfs_dir or not prep_py.is_file() or not pack_py.is_file() or (not prep_mvprev and not linux_totk):
         print(
             "[ps5-totk] Note: full RomFS shader pre-translation skipped "
-            "(provide --shaders dir with shader-cache.pack or Linux totk + totk_xlate binaries)."
+            "(provide --shaders dir with shader-cache.pack or bundled prep_mvprev + totk_xlate)."
         )
         return xlate_id
 
     stage_dir = work_dir / f"ps5_shaders_{ver_tag}"
     stage_dir.mkdir(parents=True, exist_ok=True)
-    for bin_name in ("totk", "totk_xlate", "totk_xlate.id"):
-        src_b = linux_totk.parent / bin_name
+    src_tool_dir = prep_mvprev.parent if prep_mvprev else linux_totk.parent  # type: ignore[union-attr]
+    for bin_name in ("prep_mvprev", "totk", "totk_xlate", "totk_xlate.id"):
+        src_b = src_tool_dir / bin_name
         if src_b.is_file():
             dst_b = stage_dir / bin_name
             if not dst_b.exists():
@@ -462,13 +476,53 @@ def pretranslate_ps5_shaders(
         "prepare_shaders.py (--no-run)",
     )
 
+    # Augment seed-answers.bin with mvprev=1 copies of all VS records for zero-shimmer FSR 3 Frame Gen
+    ans_path = stage_dir / "seed-answers.bin"
+    if prep_mvprev and ans_path.is_file():
+        import struct
+
+        raw = bytearray(ans_path.read_bytes())
+        magic, ver, rec_sz = struct.unpack_from("<8sII", raw, 0)
+        if magic == b"TOTKSANS" and ver == 1 and rec_sz == 216:
+            n = (len(raw) - 16) // rec_sz
+            has_mv = any((raw[16 + i * rec_sz + 68 + 146] & 0x80) != 0 for i in range(n))
+            if not has_mv:
+                mv_recs = bytearray()
+                vs_n = 0
+                for i in range(n):
+                    off = 16 + i * rec_sz
+                    rec = bytearray(raw[off : off + rec_sz])
+                    if struct.unpack_from("<I", rec, 0)[0] == 0:  # GFX_STAGE_VS
+                        rec[68 + 146] |= 0x80
+                        rec[36:68] = b"\x00" * 32
+                        rec[rec_sz - 1] = 2
+                        mv_recs.extend(rec)
+                        vs_n += 1
+                ans_path.write_bytes(bytes(raw) + bytes(mv_recs))
+                print(f"[ps5-totk] Added {vs_n} mvprev VS records to seed-answers.bin (total {n + vs_n})")
+
     env = os.environ.copy()
     env["TOTK_ZERO_LOCALS"] = "0"
-    env["TOTK_XLATE_PROCS"] = str(max(1, min(jobs, 8)))
-    print("[ps5-totk] Translating shaders for PS5 RADV (TOTK_ZERO_LOCALS=0)...")
-    res = subprocess.run([str(stage_dir / "totk"), "--prepare-shaders"], cwd=str(stage_dir), env=env)
-    if res.returncode != 0:
-        raise RuntimeError(f"totk --prepare-shaders failed with exit code {res.returncode}")
+    env["TOTK_XLATE_PROCS"] = str(max(1, min(jobs, 10)))
+    if prep_mvprev:
+        env["TOTK_XLATE"] = str(stage_dir / "totk_xlate")
+        env["TOTK_SHADER_CACHE"] = str(stage_dir / "shader-cache")
+        if (stage_dir / "totk_xlate.id").is_file():
+            xlate_id = (stage_dir / "totk_xlate.id").read_text(encoding="utf-8").strip() or xlate_id
+        env["TOTK_XLATE_ID"] = xlate_id
+        print("[ps5-totk] Translating all shaders + mvprev for PS5 RADV (TOTK_ZERO_LOCALS=0)...")
+        res = subprocess.run(
+            [str(stage_dir / "prep_mvprev"), str(stage_dir), str(max(2, min(jobs + 2, 12))), str(max(1, min(jobs, 10)))],
+            cwd=str(stage_dir),
+            env=env,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(f"prep_mvprev failed with exit code {res.returncode}")
+    else:
+        print("[ps5-totk] Translating shaders for PS5 RADV (TOTK_ZERO_LOCALS=0)...")
+        res = subprocess.run([str(stage_dir / "totk"), "--prepare-shaders"], cwd=str(stage_dir), env=env)
+        if res.returncode != 0:
+            raise RuntimeError(f"totk --prepare-shaders failed with exit code {res.returncode}")
 
     print("[ps5-totk] Packing shader-cache.pack for PS5...")
     run_cmd(
@@ -530,13 +584,13 @@ def write_ps5_totk_ini(
     *,
     xlate_id: str = DEFAULT_PS5_XLATE_ID,
     output_res: str = "2560x1440",
-    render_scale: str = "100",
+    render_scale: str = "game",
     lang: str = "es-419",
     pad_layout: str = "nintendo",
     prompts: str = "playstation",
     replay_async: int = 0,
-    ps5_hz: int = 60,
-    frame_gen: str = "off",
+    ps5_hz: int = 120,
+    frame_gen: str = "fsr3",
 ) -> Path:
     ini_path = data_out / "totk.ini"
     fps_limit_line = "fps_limit = 30\n" if frame_gen == "fsr3" else "fps_limit = 60\n"
@@ -547,7 +601,10 @@ def write_ps5_totk_ini(
         "TOTK_ROMFS_VERIFY=off\n"
         "TOTK_ASYNC_PREEMPT=0\n"
         "TOTK_ZERO_LOCALS=0\n"
+        "TOTK_PCORE=0\n"
         f"TOTK_PS5_HZ={int(ps5_hz)}\n"
+        "TOTK_FG_OBJECTS=1\n"
+        "TOTK_FG_TIMES=0\n"
         f"TOTK_XLATE_ID={xlate_id}\n"
         "TOTK_MODS_DIR=/data/totk-ps5/mods\n"
         "\n"
@@ -559,6 +616,7 @@ def write_ps5_totk_ini(
         "upscaler = fsr\n"
         "scene_upscaler = off\n"
         "sharpness = 40\n"
+        "hdr = 0\n"
         "\n"
         "[frame rate]\n"
         f"{fps_limit_line}"
@@ -572,7 +630,11 @@ def write_ps5_totk_ini(
         f"lang = {lang}\n"
         "\n"
         "[performance]\n"
-        f"replay_async = {replay_async}\n",
+        f"replay_async = {replay_async}\n"
+        "replay_workers = 0\n"
+        "tex_released_mib = 128\n"
+        "tex_vram_pressure = 80\n"
+        "vram_headroom = 0\n",
         encoding="utf-8",
     )
     return ini_path
@@ -593,10 +655,10 @@ def build_full_ps5_game(
     pretranslate_shaders: bool = False,
     mods: list[Path] | None = None,
     output_res: str = "2560x1440",
-    render_scale: str = "100",
+    render_scale: str = "game",
     lang: str = "es-419",
-    ps5_hz: int = 60,
-    frame_gen: str = "off",
+    ps5_hz: int = 120,
+    frame_gen: str = "fsr3",
 ) -> Path:
     t0 = time.time()
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -657,7 +719,7 @@ def build_full_ps5_game(
     ]
 
     gen_flags = common_flags + [
-        "-O1",
+        "-O2",
         "-g0",
         "-Wno-everything",
         "-fvisibility=hidden",

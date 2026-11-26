@@ -74,23 +74,44 @@ python3 scripts/link_runtime_ps5.py
   --jobs 10
 ```
 
-### 2. Generar el AppImage todo-en-uno
+### 2. Generar el AppImage todo-en-uno desde cero (0 datos de Nintendo)
 ```bash
+# 1) Compilar traductor de shaders (con parche mvprev) + prep_mvprev + hactool
+python3 ../totk-linux-native-recomp/tools/build_xlate.py --out build/xlate_mvprev
+clang -O2 -I../totk-linux-native-recomp/runtime \
+  scripts/prep_mvprev_main.c \
+  ../totk-linux-native-recomp/runtime/{gfx_shader.c,cfg.c,platform/linux.c,platform/common.c,sha256.c} \
+  -lpthread -ldl -lm -o build/xlate_mvprev/prep_mvprev
+python3 ../totk-linux-native-recomp/tools/build_hactool.py --src build/hactool_src --out build/hactool
+
+# 2) Compilar runtime PS5 + empaquetar AppImage autocontenido
+python3 scripts/probe_runtime_compile.py
+python3 scripts/link_runtime_ps5.py
+.venv/bin/python -m builder.cli --build-runtime-lib
 python3 scripts/make_appimage.py
 # Salida: out/PS5TotkBuilder-v0.1.0-linux-x64.AppImage
 ```
 
-### 3. Uso del AppImage (GUI o CLI)
+### 3. Uso del AppImage (solo necesitas tu copia legal del juego + `prod.keys`)
 - **Interfaz gráfica (4 pestañas: Compilar & Shaders / MODS / Enviar a PS5 FTP / Layout PS5):**
   ```bash
   ./out/PS5TotkBuilder-v0.1.0-linux-x64.AppImage
   ```
-- **CLI (compilar + mods + envío directo a PS5):**
+- **CLI desde archivo `.xci`/`.nsp` (+ update `.nsp` opcional) + `prod.keys`:**
+  ```bash
+  ./out/PS5TotkBuilder-v0.1.0-linux-x64.AppImage \
+    --game /ruta/a/totk_base.xci \
+    --update /ruta/a/totk_v143.nsp \
+    --keys /ruta/a/prod.keys \
+    --pretranslate-shaders \
+    --mod /ruta/a/mi_mod.zip \
+    --deploy-ftp 10.0.0.195 --ftp-port 2121
+  ```
+- **CLI desde `exefs/` + `romfs/` ya extraídos:**
   ```bash
   ./out/PS5TotkBuilder-v0.1.0-linux-x64.AppImage \
     --exefs /ruta/a/exefs --romfs /ruta/a/romfs \
     --pretranslate-shaders \
-    --mod /ruta/a/mi_mod.zip \
     --deploy-ftp 10.0.0.195 --ftp-port 2121
   ```
 - **Ver layout PS5 desde terminal:**

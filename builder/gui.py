@@ -70,17 +70,21 @@ def launch_gui() -> int:
     tab_build = tk.Frame(notebook, bg=bg, padx=10, pady=8)
     notebook.add(tab_build, text="1. Compilar & Shaders")
 
+    def _if_exists(p: str) -> str:
+        return p if Path(p).exists() else ""
+
     vars_map: dict[str, tk.StringVar] = {
         "game": tk.StringVar(value=""),
-        "keys": tk.StringVar(value="/home/saul/Games/Hyrule/TOTK/keys/prod.keys"),
-        "exefs": tk.StringVar(value="/home/saul/Games/Hyrule/TOTK/ROM/exefs"),
-        "romfs": tk.StringVar(value="/home/saul/Games/Hyrule/TOTK/ROM/romfs"),
-        "shaders": tk.StringVar(value="/home/saul/Games/Hyrule/TOTK/totk-runtime"),
+        "update": tk.StringVar(value=""),
+        "keys": tk.StringVar(value=_if_exists("/home/saul/Games/Hyrule/TOTK/keys/prod.keys")),
+        "exefs": tk.StringVar(value=_if_exists("/home/saul/Games/Hyrule/TOTK/ROM/exefs")),
+        "romfs": tk.StringVar(value=_if_exists("/home/saul/Games/Hyrule/TOTK/ROM/romfs")),
+        "shaders": tk.StringVar(value=""),
         "out": tk.StringVar(value=str(Path.home() / "TOTK-PS5-Out")),
         "res": tk.StringVar(value="2560x1440"),
         "hz": tk.StringVar(value="120"),
         "frame_gen": tk.StringVar(value="fsr3"),
-        "scale": tk.StringVar(value="100"),
+        "scale": tk.StringVar(value="game"),
         "lang": tk.StringVar(value="es-419"),
         "ftp_host": tk.StringVar(value="10.0.0.195"),
         "ftp_port": tk.StringVar(value="2121"),
@@ -107,15 +111,16 @@ def launch_gui() -> int:
         tk.Button(parent, text="Examinar", command=pick, bg=btn_bg, fg=fg).grid(row=row, column=2, pady=2)
 
     tab_build.columnconfigure(1, weight=1)
-    add_row(tab_build, 0, "Archivo juego (.xci/.nsp):", "game", False)
-    add_row(tab_build, 1, "Switch prod.keys:", "keys", False)
-    add_row(tab_build, 2, "O ExeFS extraído:", "exefs", True)
-    add_row(tab_build, 3, "O RomFS extraído:", "romfs", True)
-    add_row(tab_build, 4, "Carpeta caché shaders:", "shaders", True)
-    add_row(tab_build, 5, "Carpeta de salida:", "out", True)
+    add_row(tab_build, 0, "Juego base (.xci/.nsp):", "game", False)
+    add_row(tab_build, 1, "Update (.nsp opcional):", "update", False)
+    add_row(tab_build, 2, "Switch prod.keys:", "keys", False)
+    add_row(tab_build, 3, "O ExeFS extraído:", "exefs", True)
+    add_row(tab_build, 4, "O RomFS extraído:", "romfs", True)
+    add_row(tab_build, 5, "Carpeta caché shaders:", "shaders", True)
+    add_row(tab_build, 6, "Carpeta de salida:", "out", True)
 
     opts = tk.Frame(tab_build, bg=bg)
-    opts.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(6, 2))
+    opts.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(6, 2))
     tk.Checkbutton(
         opts,
         text="Íconos PlayStation por defecto (△ ○ × □, ○=A)",
@@ -138,7 +143,7 @@ def launch_gui() -> int:
     ).pack(side="left")
 
     presets = tk.Frame(tab_build, bg=bg)
-    presets.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(4, 2))
+    presets.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(4, 2))
     tk.Label(presets, text="Resolución:", bg=bg, fg=fg).pack(side="left")
     ttk.Combobox(presets, textvariable=vars_map["res"], values=("2560x1440", "1920x1080"), width=10, state="readonly").pack(
         side="left", padx=(4, 8)
@@ -297,6 +302,8 @@ def launch_gui() -> int:
         else:
             if vars_map["game"].get().strip():
                 cmd += ["--game", vars_map["game"].get().strip()]
+                if vars_map["update"].get().strip():
+                    cmd += ["--update", vars_map["update"].get().strip()]
                 if vars_map["keys"].get().strip():
                     cmd += ["--keys", vars_map["keys"].get().strip()]
             else:
