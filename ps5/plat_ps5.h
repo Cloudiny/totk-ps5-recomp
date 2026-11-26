@@ -2,7 +2,7 @@
  * ps5/plat_ps5.h
  *
  * Core PS5 platform bridge declarations for porting totk-linux-native-recomp
- * onto PlayStation 5 (Prospero) via libps5platform + Mesa RADV PS5.
+ * onto PlayStation 5 via libps5platform + Mesa RADV PS5.
  *
  * Mirrors the contracts of:
  *   - totk-linux-native-recomp/runtime/platform/platform.h

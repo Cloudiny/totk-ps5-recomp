@@ -1,12 +1,12 @@
 # PS5 Tears of the Kingdom Recomp (`PPSA99199`)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-2EE6A6.svg)](LICENSE)
-[![Target](https://img.shields.io/badge/Target-PS5%20Prospero%20(Mesa%20RADV)-38BDF8.svg)](#features)
+[![Target](https://img.shields.io/badge/Target-PS5%20(Mesa%20RADV)-38BDF8.svg)](#features)
 [![Builder](https://img.shields.io/badge/Builder-Linux%20x64%20AppImage-E6C36A.svg)](#quick-start-appimage)
 
-> **Native PlayStation 5 (Prospero) port of *The Legend of Zelda: Tears of the Kingdom* (v1.4.3)** built via static AArch64 → x86\_64 recompilation (`-O2 -march=znver2`), direct `VK_KHR_display` rendering on Mesa RADV (`NAVI21`), AMD FSR 3.1.5 Frame Generation (`mvprev`), DualSense with PlayStation button prompts, 38 native PS5 Trophies, automatic per-PS5-user save isolation, and an all-in-one bilingual (**ES / EN**) Linux AppImage builder with a built-in **GameBanana Mod Browser**.
+> **Native PlayStation 5 port of *The Legend of Zelda: Tears of the Kingdom* (v1.4.3)** built via static AArch64 → x86\_64 recompilation (`-O2 -march=znver2`), direct `VK_KHR_display` rendering on Mesa RADV (`NAVI21`), AMD FSR 3.1.5 Frame Generation (`mvprev`), DualSense with PlayStation button prompts, 38 native PS5 Trophies, automatic per-PS5-user save isolation, and an all-in-one bilingual (**ES / EN**) Linux AppImage builder with a built-in **GameBanana Mod Browser**.
 >
-> **Port nativo para PlayStation 5 (Prospero) de *The Legend of Zelda: Tears of the Kingdom* (v1.4.3)** con recompilación estática AArch64 → x86\_64 (`-O2 -march=znver2`), renderizado directo `VK_KHR_display` en Mesa RADV, AMD FSR 3.1.5 Frame Generation (`mvprev`), DualSense con íconos PlayStation, 38 Trofeos PS5 nativos, partidas aisladas por usuario de PS5 y un AppImage todo-en-uno bilingüe (**ES / EN**) con buscador integrado de mods de **GameBanana**.
+> **Port nativo para PlayStation 5 de *The Legend of Zelda: Tears of the Kingdom* (v1.4.3)** con recompilación estática AArch64 → x86\_64 (`-O2 -march=znver2`), renderizado directo `VK_KHR_display` en Mesa RADV, AMD FSR 3.1.5 Frame Generation (`mvprev`), DualSense con íconos PlayStation, 38 Trofeos PS5 nativos, partidas aisladas por usuario de PS5 y un AppImage todo-en-uno bilingüe (**ES / EN**) con buscador integrado de mods de **GameBanana**.
 
 > [!IMPORTANT]
 > **Legal Notice / Aviso Legal:** This repository and the pre-release AppImage contain **ZERO Nintendo game data, ROMs, ExeFS/RomFS assets, shaders, or encryption keys**. You must supply your own legally dumped copy of *Tears of the Kingdom* (`.xci`/`.nsp` + `prod.keys`, or extracted `exefs/` + `romfs/`).

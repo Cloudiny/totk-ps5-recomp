@@ -1,7 +1,7 @@
 /*
  * ps5/platform_ps5.c
  *
- * PlayStation 5 (Prospero) implementation of totk-linux-native-recomp's
+ * PlayStation 5 implementation of totk-linux-native-recomp's
  * runtime/platform/platform.h using libkernel + libps5platform + Mesa RADV PS5.
  */
 
@@ -1776,10 +1776,10 @@ int plat_os_version(char *out, size_t cap) {
     memset(&sw, 0, sizeof(sw));
     sw.size = sizeof(sw);
     if (sceKernelGetSystemSwVersion(&sw) == 0) {
-        snprintf(out, cap, "PS5 Prospero FW %s", sw.text);
+        snprintf(out, cap, "PS5 FW %s", sw.text);
         return 1;
     }
-    snprintf(out, cap, "PS5 Prospero");
+    snprintf(out, cap, "PS5");
     return 1;
 }
 
