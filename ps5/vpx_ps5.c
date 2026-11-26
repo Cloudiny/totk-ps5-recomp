@@ -41,6 +41,7 @@ extern int avcodec_open2(AVCodecContext *avctx, const AVCodec *codec, AVDictiona
 extern void avcodec_free_context(AVCodecContext **avctx);
 extern int avcodec_send_packet(AVCodecContext *avctx, const void *avpkt);
 extern int avcodec_receive_frame(AVCodecContext *avctx, void *frame);
+extern void avcodec_flush_buffers(AVCodecContext *avctx);
 
 extern void *av_packet_alloc(void);
 extern void av_packet_free(void **pkt);
@@ -149,6 +150,16 @@ vpx_codec_err_t vpx_codec_decode(
     memcpy(ph->data, data, data_sz);
 
     int rc = avcodec_send_packet(p->avctx, p->pkt);
+    if (rc == -11 || rc == -35) { /* AVERROR(EAGAIN) on Linux (-11) or FreeBSD/PS5 (-35) */
+        av_frame_unref(p->frame);
+        while (avcodec_receive_frame(p->avctx, p->frame) == 0) {
+            av_frame_unref(p->frame);
+        }
+        rc = avcodec_send_packet(p->avctx, p->pkt);
+    } else if (rc == -541478725) { /* AVERROR_EOF after a prior drain packet */
+        avcodec_flush_buffers(p->avctx);
+        rc = avcodec_send_packet(p->avctx, p->pkt);
+    }
     av_packet_unref(p->pkt);
     p->last_err = rc;
     if (rc < 0) {

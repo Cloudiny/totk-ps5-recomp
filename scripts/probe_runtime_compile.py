@@ -510,6 +510,83 @@ def prepare_ps5_override(src: Path, rel: Path) -> Path:
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(txt, encoding="utf-8")
         return dst
+    if rel_posix == "ov_movie.c":
+        txt = src.read_text(encoding="utf-8")
+        old_gcount = "static volatile int32_t g_count;                // live host decoders: movie_tick returns at once when 0"
+        new_gcount = (
+            "static volatile int32_t g_count;                // live host decoders: movie_tick returns at once when 0\n"
+            "int ps5_movie_active(void) { return __atomic_load_n(&g_count, __ATOMIC_RELAXED) > 0; }"
+        )
+        if old_gcount not in txt:
+            raise RuntimeError("PS5 ov_movie.c override failed: g_count anchor not found")
+        txt = txt.replace(old_gcount, new_gcount, 1)
+        dst = override_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(txt, encoding="utf-8")
+        return dst
+    if rel_posix == "vk_texture.c":
+        txt = src.read_text(encoding="utf-8")
+        old_samp = (
+            "        s->sp = sampler_for(c, &k);\n"
+            "    }\n"
+            "    return s->sp;\n"
+            "}"
+        )
+        new_samp = (
+            "        s->sp = sampler_for(c, &k);\n"
+            "    }\n"
+            "    return s->sp;\n"
+            "}\n"
+            "\n"
+            "VkSampler vk_sampler_movie_linear_locked(int id) {\n"
+            "    VkCtx *c = vk_ctx();\n"
+            "    if (!c) return VK_NULL_HANDLE;\n"
+            "    samp_par k;\n"
+            "    memset(&k, 0, sizeof k);\n"
+            "    if (id >= 0 && id < nsslots && sslots[id].used) k = sslots[id].p;\n"
+            "    else k.ws = k.wt = k.wr = NVN_WRAP_MODE_CLAMP_TO_EDGE;\n"
+            "    k.magf = NVN_MAG_FILTER_LINEAR;\n"
+            "    k.minf = NVN_MIN_FILTER_LINEAR;\n"
+            "    k.aniso = 1;\n"
+            "    k.ws = NVN_WRAP_MODE_CLAMP_TO_EDGE;\n"
+            "    k.wt = NVN_WRAP_MODE_CLAMP_TO_EDGE;\n"
+            "    return sampler_for(c, &k);\n"
+            "}"
+        )
+        if old_samp not in txt:
+            raise RuntimeError("PS5 vk_texture.c override failed: vk_sampler_point_by_id_locked anchor not found")
+        txt = txt.replace(old_samp, new_samp, 1)
+        dst = override_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(txt, encoding="utf-8")
+        return dst
+    if rel_posix == "vk_exec_draw.c":
+        txt = src.read_text(encoding="utf-8")
+        repls = [
+            (
+                "static void tex_info_full(VkExec *ex, const GfxShaderRes *r, uint64_t h, int storage, int separate,",
+                "extern int ps5_movie_active(void) __attribute__((weak));\n"
+                "extern VkSampler vk_sampler_movie_linear_locked(int id);\n"
+                "static void tex_info_full(VkExec *ex, const GfxShaderRes *r, uint64_t h, int storage, int separate,",
+            ),
+            (
+                "            samp = point ? vk_sampler_point_by_id_locked(sid) : vk_sampler_by_id_locked(sid);",
+                "            int movie_plane = !point && ps5_movie_active && ps5_movie_active() && img && img->levels == 1 && img->layers == 1 &&\n"
+                "                              ((img->format == VK_FORMAT_R8_UNORM && img->width == 1920 && img->height == 1080) ||\n"
+                "                               (img->format == VK_FORMAT_R8G8_UNORM && img->width == 960 && img->height == 540));\n"
+                "            samp = point ? vk_sampler_point_by_id_locked(sid)\n"
+                "                 : movie_plane ? vk_sampler_movie_linear_locked(sid)\n"
+                "                 : vk_sampler_by_id_locked(sid);",
+            ),
+        ]
+        for old, new in repls:
+            if old not in txt:
+                raise RuntimeError(f"PS5 vk_exec_draw.c override failed: missing {old[:60]!r}")
+            txt = txt.replace(old, new, 1)
+        dst = override_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(txt, encoding="utf-8")
+        return dst
     if rel_posix == "cfg.c":
         txt = src.read_text(encoding="utf-8")
         repls = [
@@ -536,6 +613,30 @@ def prepare_ps5_override(src: Path, rel: Path) -> Path:
             (
                 '{"BIND_INC", "0", "0|1|check", RESTART},',
                 '{"BIND_INC", "1", "0|1|check", RESTART},',
+            ),
+            (
+                '{"WINDOW_SIZE", "1920x1080", NULL, LIVE}',
+                '{"WINDOW_SIZE", "2560x1440", NULL, LIVE}',
+            ),
+            (
+                '{"OUTPUT_RES", "1920x1080", NULL, RESTART}, {"RENDER_SCALE", "game", "game|50|67|75|100|125|150|200", RESTART},',
+                '{"OUTPUT_RES", "2560x1440", NULL, RESTART}, {"RENDER_SCALE", "75", "game|50|67|75|100|125|150|200", RESTART},',
+            ),
+            (
+                '{"DYNAMIC_RES", "1", "0|1", LIVE},',
+                '{"DYNAMIC_RES", "0", "0|1", LIVE},',
+            ),
+            (
+                '{"UPSCALER", "fsr", "fsr|bilinear", LIVE}, {"SHARPNESS", "80", "0..100", LIVE},',
+                '{"UPSCALER", "fsr", "fsr|bilinear", LIVE}, {"SHARPNESS", "35", "0..100", LIVE},',
+            ),
+            (
+                '{"ANISO", "game", "game|2|4|8|16", RESTART},',
+                '{"ANISO", "8", "game|2|4|8|16", RESTART},',
+            ),
+            (
+                '{"FRAME_GEN", "off", "off|fsr3", LIVE},',
+                '{"FRAME_GEN", "fsr3", "off|fsr3", LIVE},',
             ),
         ]
         for old, new in repls:

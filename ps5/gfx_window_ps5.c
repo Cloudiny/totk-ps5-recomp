@@ -21,17 +21,19 @@
 extern PFN_vkVoidFunction vk_icdGetInstanceProcAddr(VkInstance instance, const char *pName);
 extern void rt_log(const char *fmt, ...);
 extern const char *cfg_get(const char *name) __attribute__((weak));
+extern const char *cfg_value(const char *name) __attribute__((weak));
 extern void gfx_window_set_refresh(double hz) __attribute__((weak));
 
-static int g_width = 1920;
-static int g_height = 1080;
+static int g_width = 2560;
+static int g_height = 1440;
 static int g_mode_w = 0, g_mode_h = 0;
 static int g_opened = 0;
 
 static void want_display_size(int *out_w, int *out_h) {
-    int w = 1920, h = 1080;
+    int w = 2560, h = 1440;
     const char *disp = cfg_get ? cfg_get("TOTK_PS5_DISPLAY") : NULL;
     if (!disp || !*disp) disp = cfg_get ? cfg_get("TOTK_OUTPUT_RES") : NULL;
+    if ((!disp || !*disp) && cfg_value) disp = cfg_value("TOTK_OUTPUT_RES");
     if (disp && *disp) {
         int pw = 0, ph = 0;
         if (sscanf(disp, "%dx%d", &pw, &ph) == 2 && pw >= 1280 && ph >= 720) {
@@ -103,7 +105,7 @@ VkSurfaceKHR wsys_surface(VkInstance inst) {
     }
 
     /* Pick display mode matching TOTK_PS5_DISPLAY / TOTK_OUTPUT_RES and TOTK_PS5_HZ (60 or 120 Hz) */
-    int want_w = 1920, want_h = 1080;
+    int want_w = 2560, want_h = 1440;
     want_display_size(&want_w, &want_h);
     int want_120 = 0;
     const char *hz = cfg_get ? cfg_get("TOTK_PS5_HZ") : NULL;
