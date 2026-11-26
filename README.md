@@ -105,14 +105,14 @@ python3 scripts/make_appimage.py
     --keys /ruta/a/prod.keys \
     --pretranslate-shaders \
     --mod /ruta/a/mi_mod.zip \
-    --deploy-ftp 10.0.0.195 --ftp-port 2121
+    --deploy-ftp <IP_DE_TU_PS5> --ftp-port 2121
   ```
 - **CLI desde `exefs/` + `romfs/` ya extraídos:**
   ```bash
   ./out/PS5TotkBuilder-v0.1.0-linux-x64.AppImage \
     --exefs /ruta/a/exefs --romfs /ruta/a/romfs \
     --pretranslate-shaders \
-    --deploy-ftp 10.0.0.195 --ftp-port 2121
+    --deploy-ftp <IP_DE_TU_PS5> --ftp-port 2121
   ```
 - **Ver layout PS5 desde terminal:**
   ```bash

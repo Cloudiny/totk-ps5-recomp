@@ -19,10 +19,10 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-TOTK_SRC = Path("/home/saul/Projects/totk-linux-native-recomp")
+TOTK_SRC = Path(os.environ.get("TOTK_UPSTREAM_SRC", str(PROJECT_ROOT.parent / "totk-linux-native-recomp")))
 APPDIR = PROJECT_ROOT / "AppDir"
 OUT_APPIMAGE = PROJECT_ROOT / "out" / "PS5TotkBuilder-v0.1.0-linux-x64.AppImage"
-APPIMAGETOOL = Path(shutil.which("appimagetool") or "/home/saul/.local/bin/appimagetool")
+APPIMAGETOOL = Path(shutil.which("appimagetool") or (Path.home() / ".local" / "bin" / "appimagetool"))
 
 INSTALL_SIDE = {
     "romfs.c",
@@ -199,9 +199,9 @@ def stage_appdir() -> Path:
         'APP="$HERE/usr/PS5TotkBuilder"\n'
         'export PYTHONPATH="$APP:$APP/site-packages${PYTHONPATH:+:$PYTHONPATH}"\n'
         'if [ "$#" -eq 0 ]; then\n'
-        '    exec python3 -m builder.gui\n'
+        '    exec python3 -P -m builder.gui\n'
         "else\n"
-        '    exec python3 -m builder.cli "$@"\n'
+        '    exec python3 -P -m builder.cli "$@"\n'
         "fi\n",
         encoding="utf-8",
     )

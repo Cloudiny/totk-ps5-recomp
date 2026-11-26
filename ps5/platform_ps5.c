@@ -197,7 +197,7 @@ static void ps5_start_watchdog(void) {
     }
 }
 
-/* ---- Per-PS5-User Save Isolation (Saúl vs Yazmín, etc.) ---- */
+/* ---- Per-PS5-User Save Isolation ---- */
 static void ps5_init_user_profile(void) {
     /* Ensure base saves root exists */
     mkdir("/data/totk-ps5", 0777);

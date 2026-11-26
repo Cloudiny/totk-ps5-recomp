@@ -54,8 +54,8 @@ PS5_LAYOUT_TEXT = """\
   ├── mods/                     (carpeta de MODS RomFS; gestionables desde el menú)
   │   └── <nombre_del_mod>/romfs/...
   ├── saves/                    (partidas separadas AUTOMÁTICAMENTE por usuario de PS5)
-  │   ├── user_<id_saul>/       (partida + backups + tiempo de juego de Saúl)
-  │   └── user_<id_yazmin>/     (partida independiente de Yazmín)
+  │   ├── user_<id_1>/          (partida + backups + trofeos + tiempo de juego Usuario 1)
+  │   └── user_<id_2>/          (partida independiente Usuario 2)
   └── logs/
       └── totk.log
 

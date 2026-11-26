@@ -137,7 +137,7 @@ def default_kit_paths(project_root: Path | None = None) -> KitPaths:
     return KitPaths(
         project_root=root,
         kit_root=root / "third_party" / "ps5-kit",
-        totk_src_root=Path("/home/saul/Projects/totk-linux-native-recomp"),
+        totk_src_root=Path(os.environ.get("TOTK_UPSTREAM_SRC", str(root.parent / "totk-linux-native-recomp"))),
         ps5_src_root=root,
         compat_inc=root / "third_party" / "ps5_compat_inc",
         vk_inc=root / "third_party" / "vk_headers",
@@ -446,7 +446,6 @@ def pretranslate_ps5_shaders(
     if not prep_mvprev:
         for cand in (
             paths.project_root / "kit_bundle" / "linux-tools" / "totk",
-            Path("/home/saul/Games/Hyrule/TOTK/totk-runtime/totk"),
             paths.totk_tools_dir.parent / "build" / ver_tag / "totk",
         ):
             if cand.is_file():

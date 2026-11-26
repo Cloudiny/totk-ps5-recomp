@@ -70,15 +70,12 @@ def launch_gui() -> int:
     tab_build = tk.Frame(notebook, bg=bg, padx=10, pady=8)
     notebook.add(tab_build, text="1. Compilar & Shaders")
 
-    def _if_exists(p: str) -> str:
-        return p if Path(p).exists() else ""
-
     vars_map: dict[str, tk.StringVar] = {
         "game": tk.StringVar(value=""),
         "update": tk.StringVar(value=""),
-        "keys": tk.StringVar(value=_if_exists("/home/saul/Games/Hyrule/TOTK/keys/prod.keys")),
-        "exefs": tk.StringVar(value=_if_exists("/home/saul/Games/Hyrule/TOTK/ROM/exefs")),
-        "romfs": tk.StringVar(value=_if_exists("/home/saul/Games/Hyrule/TOTK/ROM/romfs")),
+        "keys": tk.StringVar(value=""),
+        "exefs": tk.StringVar(value=""),
+        "romfs": tk.StringVar(value=""),
         "shaders": tk.StringVar(value=""),
         "out": tk.StringVar(value=str(Path.home() / "TOTK-PS5-Out")),
         "res": tk.StringVar(value="2560x1440"),
@@ -86,7 +83,7 @@ def launch_gui() -> int:
         "frame_gen": tk.StringVar(value="fsr3"),
         "scale": tk.StringVar(value="game"),
         "lang": tk.StringVar(value="es-419"),
-        "ftp_host": tk.StringVar(value="10.0.0.195"),
+        "ftp_host": tk.StringVar(value=""),
         "ftp_port": tk.StringVar(value="2121"),
     }
     bool_map: dict[str, tk.BooleanVar] = {

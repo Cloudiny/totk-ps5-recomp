@@ -10,7 +10,7 @@ Examples:
 
   # Full build (eboot + PS prompts + shaders + mods) and direct FTP deploy to PS5:
   python3 -m builder.cli --exefs /path/to/exefs --romfs /path/to/romfs \
-      --pretranslate-shaders --mod /path/to/mod.zip --deploy-ftp 10.0.0.195 --out ./out
+      --pretranslate-shaders --mod /path/to/mod.zip --deploy-ftp <PS5_IP> --out ./out
 """
 
 from __future__ import annotations
