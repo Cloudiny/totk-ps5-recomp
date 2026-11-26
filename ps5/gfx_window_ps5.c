@@ -100,9 +100,15 @@ VkSurfaceKHR wsys_surface(VkInstance inst) {
         return VK_NULL_HANDLE;
     }
 
-    /* Pick display mode matching TOTK_PS5_DISPLAY / TOTK_OUTPUT_RES (default 1920x1080 @ ~60Hz) */
+    /* Pick display mode matching TOTK_PS5_DISPLAY / TOTK_OUTPUT_RES and TOTK_PS5_HZ (60 or 120 Hz) */
     int want_w = 1920, want_h = 1080;
     want_display_size(&want_w, &want_h);
+    int want_120 = 0;
+    const char *hz = cfg_get ? cfg_get("TOTK_PS5_HZ") : NULL;
+    if (hz && atoi(hz) >= 100) want_120 = 1;
+    const char *lim = cfg_get ? cfg_get("TOTK_FPS_LIMIT") : NULL;
+    if (lim && atoi(lim) > 60) want_120 = 1;
+
     int pick = -1;
     for (uint32_t i = 0; i < mode_count; ++i) {
         const VkDisplayModeParametersKHR *p = &modes[i].parameters;
@@ -110,7 +116,11 @@ VkSurfaceKHR wsys_surface(VkInstance inst) {
         if ((int)p->visibleRegion.width == want_w && (int)p->visibleRegion.height == want_h) {
             int is_fast = p->refreshRate >= 61000u;
             int has_fast = pick >= 0 && modes[pick].parameters.refreshRate >= 61000u;
-            if (pick < 0 || (!is_fast && has_fast)) pick = (int)i;
+            if (want_120) {
+                if (pick < 0 || (is_fast && !has_fast)) pick = (int)i;
+            } else {
+                if (pick < 0 || (!is_fast && has_fast)) pick = (int)i;
+            }
         }
     }
     if (pick < 0) pick = 0;

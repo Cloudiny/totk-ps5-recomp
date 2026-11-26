@@ -240,15 +240,142 @@ def prepare_ps5_override(src: Path, rel: Path) -> Path:
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(txt, encoding="utf-8")
         return dst
-    if rel_posix == "vk_fg.cpp":
+    if rel_posix == "third_party/FidelityFX/sdk/src/backends/vk/ffx_vk.cpp":
         txt = src.read_text(encoding="utf-8")
-        old = 'extern "C" VkFgEngine vk_fg_engine(void) {'
-        new = 'extern "C" VkFgEngine vk_fg_engine(void) {\n    return VK_FG_OFF; /* PS5 port: FSR 3.1.5 Frame Generation disabled */'
-        if old not in txt:
-            raise RuntimeError("PS5 vk_fg.cpp override failed: vk_fg_engine not found")
+        old_conv = (
+            "void ConvertUTF8ToUTF16(const char* inputName, wchar_t* outputBuffer, size_t outputLen)\n"
+            "{\n"
+            "    memset(outputBuffer, 0, outputLen * sizeof(wchar_t));\n"
+            "    std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> converter;\n"
+            "    wcscpy_s(outputBuffer, outputLen, converter.from_bytes(inputName).c_str());\n"
+            "}\n"
+            "void ConvertUTF16ToUTF8(const wchar_t* inputName, char* outputBuffer, size_t outputLen)\n"
+            "{\n"
+            "    memset(outputBuffer, 0, outputLen * sizeof(char));\n"
+            "    std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> converter;\n"
+            "    strcpy_s(outputBuffer, outputLen, converter.to_bytes(inputName).c_str());\n"
+            "}"
+        )
+        new_conv = (
+            "/* PS5 fix: x86_64-sie-ps5 has 2-byte wchar_t, while ps5-kit libc++.a compiled\n"
+            " * std::codecvt_utf8<wchar_t> with 4-byte ucs4_to_utf8/utf8_to_ucs4, which throws\n"
+            " * std::range_error -> std::terminate() -> SIGABRT on UTF-16 input and corrupts\n"
+            " * CreatePipelineVK binding names. Use simple exception-free 2-byte conversion. */\n"
+            "void ConvertUTF8ToUTF16(const char* inputName, wchar_t* outputBuffer, size_t outputLen)\n"
+            "{\n"
+            "    if (!outputBuffer || outputLen == 0) return;\n"
+            "    memset(outputBuffer, 0, outputLen * sizeof(wchar_t));\n"
+            "    if (!inputName) return;\n"
+            "    size_t i = 0;\n"
+            "    for (; i + 1 < outputLen && inputName[i]; ++i)\n"
+            "        outputBuffer[i] = (wchar_t)(unsigned char)inputName[i];\n"
+            "    outputBuffer[i] = 0;\n"
+            "}\n"
+            "void ConvertUTF16ToUTF8(const wchar_t* inputName, char* outputBuffer, size_t outputLen)\n"
+            "{\n"
+            "    if (!outputBuffer || outputLen == 0) return;\n"
+            "    memset(outputBuffer, 0, outputLen * sizeof(char));\n"
+            "    if (!inputName) return;\n"
+            "    size_t i = 0;\n"
+            "    for (; i + 1 < outputLen && inputName[i]; ++i)\n"
+            "        outputBuffer[i] = (inputName[i] < 0x80) ? (char)inputName[i] : '?';\n"
+            "    outputBuffer[i] = 0;\n"
+            "}"
+        )
+        if old_conv not in txt:
+            raise RuntimeError("PS5 ffx_vk.cpp override failed: ConvertUTF8ToUTF16/ConvertUTF16ToUTF8 not found")
+        txt = txt.replace(old_conv, new_conv, 1)
         dst = override_dir / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_text(txt.replace(old, new, 1), encoding="utf-8")
+        dst.write_text(txt, encoding="utf-8")
+        return dst
+    if rel_posix == "vk_fg.cpp":
+        txt = src.read_text(encoding="utf-8")
+        repls = [
+            (
+                '#include <string.h>',
+                '#include <string.h>\n#include <sys/stat.h>',
+            ),
+            (
+                '    return nullptr;\n}',
+                '    rt_log("fg-dbg: device_proc(%s) -> NULL", name);\n    return nullptr;\n}',
+            ),
+            (
+                '    void *p = aligned_alloc(256, n);',
+                '    void *p = nullptr;\n    if (posix_memalign(&p, 256, n) != 0) p = nullptr;',
+            ),
+            (
+                'extern "C" VkFgEngine vk_fg_engine(void) {',
+                'extern "C" VkFgEngine vk_fg_engine(void) {\n'
+                '    static int ps5_fg_gate = -1;\n'
+                '    if (ps5_fg_gate < 0) { struct stat st_; ps5_fg_gate = (stat("/data/totk-ps5/enable_fg_test", &st_) == 0) ? 1 : 0; }\n'
+                '    if (!ps5_fg_gate) return VK_FG_OFF;',
+            ),
+            (
+                'extern "C" int vk_fg_prepare(VkCommandBuffer cb, const VkFgScene *s) {\n    g.prepared = false;',
+                'extern "C" int vk_fg_prepare(VkCommandBuffer cb, const VkFgScene *s) {\n'
+                '    static int dbg_ent; if (!dbg_ent++) rt_log("fg-dbg: enter vk_fg_prepare w=%u h=%u ow=%u oh=%u live=%d cfg=(%u,%u,%u,%u,%d,%u,%u) inv=%d inf=%d", s->w, s->h, s->ow, s->oh, (int)g.live, g.cfg.display_w, g.cfg.display_h, g.cfg.render_w, g.cfg.render_h, (int)g.cfg.color_format, g.cfg.inverted, g.cfg.infinite, s->inverted, s->infinite);\n'
+                '    g.prepared = false;',
+            ),
+            (
+                '    rec_drain();   // the SDK records into cb itself: the recorder must have made every call queued before',
+                '    static int dbg_rd; if (!dbg_rd) rt_log("fg-dbg: before rec_drain");\n'
+                '    rec_drain();   // the SDK records into cb itself: the recorder must have made every call queued before\n'
+                '    if (!dbg_rd++) rt_log("fg-dbg: after rec_drain");',
+            ),
+            (
+                '    FfxErrorCode e = ffxFrameInterpolationPrepare(&g.fi, &pd);',
+                '    static int dbg_p; if (!dbg_p) rt_log("fg-dbg: enter ffxFrameInterpolationPrepare cb=%p", (void*)cb);\n'
+                '    FfxErrorCode e = ffxFrameInterpolationPrepare(&g.fi, &pd);\n'
+                '    if (!dbg_p++) rt_log("fg-dbg: exit ffxFrameInterpolationPrepare e=%d", (int)e);',
+            ),
+            (
+                '    g.hl_ok = true;\n    return 1;',
+                '    static int dbg_h; if (!dbg_h++) rt_log("fg-dbg: vk_fg_hudless OK %ux%u", w, h);\n'
+                '    g.hl_ok = true;\n    return 1;',
+            ),
+            (
+                '    FfxErrorCode e = ffxOpticalflowContextDispatch(&g.of, &od);',
+                '    static int dbg_g; if (!dbg_g) rt_log("fg-dbg: enter ffxOpticalflowContextDispatch");\n'
+                '    FfxErrorCode e = ffxOpticalflowContextDispatch(&g.of, &od);\n'
+                '    if (!dbg_g) rt_log("fg-dbg: exit opticalflow e=%d, enter interpolation", (int)e);',
+            ),
+            (
+                '        e = ffxFrameInterpolationDispatch(&g.fi, &dd);',
+                '        e = ffxFrameInterpolationDispatch(&g.fi, &dd);\n'
+                '        if (!dbg_g++) rt_log("fg-dbg: exit interpolation e=%d", (int)e);',
+            ),
+        ]
+        for old, new in repls:
+            if old not in txt:
+                raise RuntimeError(f"PS5 vk_fg.cpp override failed: missing {old!r}")
+            txt = txt.replace(old, new, 1)
+        dst = override_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(txt, encoding="utf-8")
+        return dst
+    if rel_posix == "vk_dlaa.c":
+        txt = src.read_text(encoding="utf-8")
+        repls = [
+            (
+                '    int masked = 0, have = cam && mv_pass(ex, e, zv, 0.0f, 0.0f, 0.0f, &masked, fg_objects());',
+                '    static int dbg_fgm; if (!dbg_fgm) rt_log("fg-dbg: fg_motion before mv_pass cam=%p objects=%d", (const void*)cam, fg_objects());\n'
+                '    int masked = 0, have = cam && mv_pass(ex, e, zv, 0.0f, 0.0f, 0.0f, &masked, fg_objects());\n'
+                '    if (!dbg_fgm) rt_log("fg-dbg: fg_motion after mv_pass have=%d", have);',
+            ),
+            (
+                '    D.fg_mv_ok = vk_fg_prepare(cb, &s);',
+                '    if (!dbg_fgm++) rt_log("fg-dbg: fg_motion calling vk_fg_prepare");\n'
+                '    D.fg_mv_ok = vk_fg_prepare(cb, &s);',
+            ),
+        ]
+        for old, new in repls:
+            if old not in txt:
+                raise RuntimeError(f"PS5 vk_dlaa.c override failed: missing {old!r}")
+            txt = txt.replace(old, new, 1)
+        dst = override_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(txt, encoding="utf-8")
         return dst
     if rel_posix == "cfg.c":
         txt = src.read_text(encoding="utf-8")
@@ -284,7 +411,7 @@ def compile_one(
     cmd = [clang, *base_flags, *inc_flags]
     if src.suffix == ".cpp":
         cmd += ["-std=c++20"]
-    if kind == "ffx":
+    if kind == "ffx" or src.name in ("vk_fg.cpp", "vk_fsr3.cpp"):
         ffx = TOTK_RT / "third_party" / "FidelityFX"
         cmd += [
             "-include",
