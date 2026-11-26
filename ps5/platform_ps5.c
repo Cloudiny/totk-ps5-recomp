@@ -40,6 +40,7 @@ extern int32_t scePthreadSetprio(pthread_t thread, int prio);
 extern void rt_log(const char *fmt, ...);
 extern void *kern_cpu(void) __attribute__((weak));
 extern int kern_thread_state(uint32_t handle) __attribute__((weak));
+extern uint64_t gfx_counters __attribute__((weak)); /* offset 0 of GfxStats is uint64_t frames */
 
 /* ---- Live PS5 diagnostic counters, thread sampler & watchdog ---- */
 static volatile uint64_t g_wd_fibers = 0;
@@ -160,28 +161,64 @@ static void ps5_wd_sample_all(int sec) {
 
 static void *ps5_watchdog_thread(void *arg) {
     (void)arg;
-    for (int tick = 1; tick <= 6; ++tick) {
-        sceKernelUsleep(5000000u); /* every 5s for first 30s */
-        struct ps5_memory_stats s;
-        unsigned long long free_mb = 0, flex_mb = 0;
-        if (ps5_memory_query(&s)) {
-            free_mb = (unsigned long long)(s.free_bytes >> 20);
-            flex_mb = (unsigned long long)(s.flexible_bytes >> 20);
+    const char *verbose = getenv("TOTK_PS5_WATCHDOG");
+    int log_boot = (verbose && strcmp(verbose, "1") == 0);
+    uint64_t last_fr = 0;
+    int stuck_ticks = 0;
+    int dumped_this_stall = 0;
+    for (int tick = 1;; ++tick) {
+        sceKernelUsleep(2000000u); /* 2s poll -> 0.000% CPU overhead */
+        if (log_boot && tick <= 15 && (tick % 3) == 0) {
+            struct ps5_memory_stats s;
+            unsigned long long free_mb = 0, flex_mb = 0;
+            if (ps5_memory_query(&s)) {
+                free_mb = (unsigned long long)(s.free_bytes >> 20);
+                flex_mb = (unsigned long long)(s.flexible_bytes >> 20);
+            }
+            rt_log("ps5-wd: t=%ds thr=%llu fib=%llu com=%llu wwf=%llu free=%lluMiB flex=%lluMiB",
+                   tick * 2,
+                   (unsigned long long)__atomic_load_n(&g_wd_threads_created, __ATOMIC_RELAXED),
+                   (unsigned long long)__atomic_load_n(&g_wd_fibers, __ATOMIC_RELAXED),
+                   (unsigned long long)__atomic_load_n(&g_wd_commits, __ATOMIC_RELAXED),
+                   (unsigned long long)__atomic_load_n(&g_wd_ww_faults, __ATOMIC_RELAXED),
+                   free_mb, flex_mb);
         }
-        rt_log("ps5-wd: t=%ds thr=%llu fib=%llu com=%llu wwf=%llu free=%lluMiB flex=%lluMiB",
-               tick * 5,
-               (unsigned long long)__atomic_load_n(&g_wd_threads_created, __ATOMIC_RELAXED),
-               (unsigned long long)__atomic_load_n(&g_wd_fibers, __ATOMIC_RELAXED),
-               (unsigned long long)__atomic_load_n(&g_wd_commits, __ATOMIC_RELAXED),
-               (unsigned long long)__atomic_load_n(&g_wd_ww_faults, __ATOMIC_RELAXED),
-               free_mb, flex_mb);
+        /* Always-on zero-overhead freeze detector once rendering has started (frames >= 60). */
+        uint64_t fr = (&gfx_counters != NULL) ? __atomic_load_n(&gfx_counters, __ATOMIC_RELAXED) : 0;
+        if (fr < 60) {
+            last_fr = fr;
+            stuck_ticks = 0;
+            dumped_this_stall = 0;
+            continue;
+        }
+        if (fr == last_fr) {
+            stuck_ticks++;
+            if (stuck_ticks == 4 && !dumped_this_stall) { /* 8s stalled */
+                dumped_this_stall = 1;
+                struct ps5_memory_stats s;
+                unsigned long long free_mb = 0, flex_mb = 0;
+                if (ps5_memory_query(&s)) {
+                    free_mb = (unsigned long long)(s.free_bytes >> 20);
+                    flex_mb = (unsigned long long)(s.flexible_bytes >> 20);
+                }
+                rt_log("ps5-hang: FREEZE DETECTED at frame=%llu (8s stalled) thr=%llu free=%lluMiB flex=%lluMiB",
+                       (unsigned long long)fr,
+                       (unsigned long long)__atomic_load_n(&g_wd_threads_created, __ATOMIC_RELAXED),
+                       free_mb, flex_mb);
+                ps5_wd_sample_all(tick * 2);
+            }
+        } else {
+            last_fr = fr;
+            stuck_ticks = 0;
+            dumped_this_stall = 0;
+        }
     }
     return NULL;
 }
 
 static void ps5_start_watchdog(void) {
     const char *wd = getenv("TOTK_PS5_WATCHDOG");
-    if (!wd || strcmp(wd, "1") != 0) return;
+    if (wd && strcmp(wd, "0") == 0) return;
     int32_t zero = 0;
     if (__atomic_compare_exchange_n(&g_wd_started, &zero, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
         struct sigaction sa;

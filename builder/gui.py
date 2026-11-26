@@ -1,75 +1,186 @@
-#!/usr/bin/env python3
-"""All-in-One Tkinter GUI for PS5TotkBuilder AppImage (PPSA99199).
-
-Features:
-  - Tab 1 (Compilar & Shaders): Build PPSA99199/eboot.bin, PlayStation button icons (△ ○ × □),
-    and PS5 RADV pre-translated shaders (TOTK_ZERO_LOCALS=0).
-  - Tab 2 (MODS): Add RomFS mod folders or .zip archives staged to /data/totk-ps5/mods/.
-  - Tab 3 (Enviar a PS5 FTP): One-click FTP deployment with exact PS5 layout creation.
-  - Tab 4 (Layout PS5): Full directory structure & DualSense controls reference.
-"""
+"""PS5 Tears of the Kingdom Builder — Modern Obsidian & Zonai Desktop UI (PPSA99199)."""
 
 from __future__ import annotations
 
-import os
 import queue
 import subprocess
 import sys
 import threading
+import tkinter as tk
 from pathlib import Path
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-from .cli import main as cli_main
 from .deploy import PS5_LAYOUT_TEXT
-from .pipeline import default_kit_paths
+from .pipeline import TITLE_ID, default_kit_paths
+
+# ---- Obsidian x Zonai Emerald & Hylian Gold Design Tokens ----
+C_BG = "#0B0E14"          # Deep obsidian canvas
+C_SIDEBAR = "#0F141D"     # Elevated sidebar surface
+C_CARD = "#141B26"        # Card surface
+C_CARD_ALT = "#182130"    # Hover / nested surface
+C_BORDER = "#222E42"      # Hairline structural border
+C_INPUT = "#0C1119"       # Crisp dark input well
+C_TERM = "#070A0F"        # Console terminal background
+
+C_ACCENT = "#2EE6A6"      # Zonai Emerald primary CTA
+C_ACCENT_HOV = "#4BF2B8"
+C_ACCENT_TXT = "#061610"
+C_GOLD = "#E6C36A"        # Hylian Gold highlight
+C_BLUE = "#38BDF8"        # PS5 Cyan-Blue secondary CTA
+C_BLUE_HOV = "#60CCF9"
+C_DANGER = "#F87171"
+
+C_TEXT = "#F1F5F9"        # High-contrast primary text
+C_MUTED = "#94A3B8"       # Secondary labels
+C_DIM = "#64748B"         # Subtle captions
 
 
-def launch_gui() -> int:
-    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
-        return cli_main(["--help"])
-
+def _pick_font(root: tk.Tk) -> str:
     try:
-        import tkinter as tk
-        from tkinter import filedialog, messagebox, scrolledtext, ttk
-    except Exception:
-        return cli_main(["--help"])
+        from tkinter import font as tkfont
 
+        fams = set(tkfont.families(root))
+        for cand in ("Inter", "Segoe UI", "Ubuntu", "Cantarell", "Noto Sans", "DejaVu Sans"):
+            if cand in fams:
+                return cand
+    except Exception:
+        pass
+    return "Sans"
+
+
+def _load_logo(icon_path: Path, size: int = 54) -> tk.PhotoImage | None:
+    if not icon_path.is_file():
+        return None
+    try:
+        from PIL import Image, ImageDraw, ImageTk  # type: ignore
+
+        im = Image.open(icon_path).convert("RGBA").resize((size, size), Image.Resampling.LANCZOS)
+        mask = Image.new("L", (size, size), 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, size - 1, size - 1), radius=12, fill=255)
+        im.putalpha(mask)
+        return ImageTk.PhotoImage(im)  # type: ignore[return-value]
+    except Exception:
+        try:
+            img = tk.PhotoImage(file=str(icon_path))
+            factor = max(1, img.width() // size)
+            return img.subsample(factor, factor) if factor > 1 else img
+        except Exception:
+            return None
+
+
+class ModernButton(tk.Frame):
+    """Flat, border-styled button with smooth hover transitions and hand cursor."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        text: str,
+        command,
+        *,
+        bg: str = C_CARD_ALT,
+        hover_bg: str = "#223047",
+        fg: str = C_TEXT,
+        border: str = C_BORDER,
+        font_spec=("Sans", 10, "bold"),
+        padx: int = 14,
+        pady: int = 8,
+    ) -> None:
+        super().__init__(parent, bg=border, padx=1, pady=1, cursor="hand2")
+        self._bg = bg
+        self._hover_bg = hover_bg
+        self._fg = fg
+        self._cmd = command
+        self._enabled = True
+
+        self._inner = tk.Label(
+            self,
+            text=text,
+            bg=bg,
+            fg=fg,
+            font=font_spec,
+            padx=padx,
+            pady=pady,
+            cursor="hand2",
+        )
+        self._inner.pack(fill="both", expand=True)
+
+        for w in (self, self._inner):
+            w.bind("<Enter>", self._on_enter)
+            w.bind("<Leave>", self._on_leave)
+            w.bind("<ButtonRelease-1>", self._on_click)
+
+    def _on_enter(self, _e=None) -> None:
+        if self._enabled:
+            self._inner.configure(bg=self._hover_bg)
+
+    def _on_leave(self, _e=None) -> None:
+        if self._enabled:
+            self._inner.configure(bg=self._bg)
+
+    def _on_click(self, _e=None) -> None:
+        if self._enabled and self._cmd:
+            self._cmd()
+
+    def set_enabled(self, enabled: bool) -> None:
+        self._enabled = enabled
+        self._inner.configure(
+            bg=self._bg if enabled else "#111722",
+            fg=self._fg if enabled else C_DIM,
+            cursor="hand2" if enabled else "arrow",
+        )
+        self.configure(cursor="hand2" if enabled else "arrow")
+
+
+def run_gui() -> int:
     paths = default_kit_paths()
 
     root = tk.Tk()
-    root.title("PS5 TOTK Builder — Tears of the Kingdom (PPSA99199)")
-    root.geometry("860x660")
-    root.configure(bg="#111917")
+    root.title(f"PS5 TOTK Builder — Tears of the Kingdom ({TITLE_ID})")
+    root.geometry("1100x760")
+    root.minsize(980, 680)
+    root.configure(bg=C_BG)
 
-    bg = "#111917"
-    fg = "#e6efe9"
-    accent = "#4fc3a1"
-    entry_bg = "#1b2724"
-    btn_bg = "#22332e"
+    ui_font = _pick_font(root)
+    mono_font = "JetBrains Mono" if ui_font == "Inter" else "Monospace"
 
     style = ttk.Style()
     try:
         style.theme_use("clam")
-    except Exception:
+    except tk.TclError:
         pass
-    style.configure("TNotebook", background=bg, borderwidth=0)
-    style.configure("TNotebook.Tab", background=btn_bg, foreground=fg, padding=(12, 6))
-    style.map("TNotebook.Tab", background=[("selected", accent)], foreground=[("selected", "#09110f")])
 
-    tk.Label(
-        root,
-        text="PS5 Tears of the Kingdom Builder — Title ID PPSA99199",
-        font=("Sans", 13, "bold"),
-        bg=bg,
-        fg=accent,
-    ).pack(pady=(10, 4))
+    style.configure(
+        "Dark.TCombobox",
+        fieldbackground=C_INPUT,
+        background=C_CARD_ALT,
+        foreground=C_TEXT,
+        arrowcolor=C_ACCENT,
+        bordercolor=C_BORDER,
+        lightcolor=C_BORDER,
+        darkcolor=C_BORDER,
+        padding=(8, 5),
+    )
+    style.map(
+        "Dark.TCombobox",
+        fieldbackground=[("readonly", C_INPUT), ("focus", "#101826")],
+        foreground=[("readonly", C_TEXT)],
+        bordercolor=[("focus", C_ACCENT)],
+    )
+    style.configure(
+        "Zonai.Horizontal.TProgressbar",
+        troughcolor=C_INPUT,
+        background=C_ACCENT,
+        bordercolor=C_BG,
+        lightcolor=C_ACCENT,
+        darkcolor=C_ACCENT,
+        thickness=4,
+    )
+    root.option_add("*TCombobox*Listbox.background", C_CARD)
+    root.option_add("*TCombobox*Listbox.foreground", C_TEXT)
+    root.option_add("*TCombobox*Listbox.selectBackground", C_ACCENT)
+    root.option_add("*TCombobox*Listbox.selectForeground", C_ACCENT_TXT)
 
-    notebook = ttk.Notebook(root)
-    notebook.pack(fill="x", padx=12, pady=4)
-
-    # ---------------- TAB 1: Build & Shaders ----------------
-    tab_build = tk.Frame(notebook, bg=bg, padx=10, pady=8)
-    notebook.add(tab_build, text="1. Compilar & Shaders")
-
+    # ---- Shared State (100% clean — zero hardcoded personal paths or LAN IPs) ----
     vars_map: dict[str, tk.StringVar] = {
         "game": tk.StringVar(value=""),
         "update": tk.StringVar(value=""),
@@ -94,190 +205,457 @@ def launch_gui() -> int:
         "ftp_ini": tk.BooleanVar(value=True),
     }
 
-    def add_row(parent: tk.Frame, row: int, label: str, key: str, is_dir: bool) -> None:
-        tk.Label(parent, text=label, bg=bg, fg=fg, anchor="w", width=22).grid(row=row, column=0, sticky="w", pady=2)
-        tk.Entry(parent, textvariable=vars_map[key], bg=entry_bg, fg=fg, insertbackground=fg).grid(
-            row=row, column=1, sticky="ew", padx=6, pady=2
+    # ---- Root Two-Column Shell: Left Sidebar + Right Main Workspace ----
+    shell = tk.Frame(root, bg=C_BG)
+    shell.pack(fill="both", expand=True)
+
+    sidebar = tk.Frame(shell, bg=C_SIDEBAR, width=236)
+    sidebar.pack(side="left", fill="y")
+    sidebar.pack_propagate(False)
+    tk.Frame(shell, bg=C_BORDER, width=1).pack(side="left", fill="y")
+
+    main_col = tk.Frame(shell, bg=C_BG)
+    main_col.pack(side="left", fill="both", expand=True)
+
+    # ---- Sidebar Brand Header ----
+    brand = tk.Frame(sidebar, bg=C_SIDEBAR, padx=18, pady=20)
+    brand.pack(fill="x")
+
+    logo_img = _load_logo(paths.assets_sce_sys / "icon0.png", size=52)
+    if logo_img is not None:
+        logo_lbl = tk.Label(brand, image=logo_img, bg=C_SIDEBAR)
+        logo_lbl.image = logo_img  # type: ignore[attr-defined]
+        logo_lbl.pack(side="left", padx=(0, 12))
+
+    brand_txt = tk.Frame(brand, bg=C_SIDEBAR)
+    brand_txt.pack(side="left", fill="x", expand=True)
+    tk.Label(
+        brand_txt,
+        text="TOTK PS5",
+        bg=C_SIDEBAR,
+        fg=C_TEXT,
+        font=(ui_font, 14, "bold"),
+        anchor="w",
+    ).pack(fill="x")
+    tk.Label(
+        brand_txt,
+        text=f"{TITLE_ID}  ·  BUILDER",
+        bg=C_SIDEBAR,
+        fg=C_GOLD,
+        font=(ui_font, 8, "bold"),
+        anchor="w",
+    ).pack(fill="x", pady=(2, 0))
+
+    tk.Frame(sidebar, bg=C_BORDER, height=1).pack(fill="x", padx=16, pady=(0, 14))
+
+    # ---- Sidebar Navigation ----
+    nav_items = [
+        ("build", "◆", "Compilar & Shaders", "ExeFS, RomFS, -O2 y RADV"),
+        ("mods", "◈", "Mods (RomFS)", "Carpetas y archivos .zip"),
+        ("ftp", "▲", "Enviar a PS5", "Despliegue seguro por FTP"),
+        ("layout", "▤", "Layout PS5", "Rutas exactas en consola"),
+    ]
+    nav_widgets: dict[str, tuple[tk.Frame, tk.Frame, tk.Label, tk.Label, tk.Label]] = {}
+    pages: dict[str, tk.Frame] = {}
+
+    def select_page(key: str) -> None:
+        for k, page in pages.items():
+            if k == key:
+                page.pack(fill="both", expand=True)
+            else:
+                page.pack_forget()
+        for k, (row, bar, ico, title_l, sub_l) in nav_widgets.items():
+            active = k == key
+            bg_c = "#172233" if active else C_SIDEBAR
+            row.configure(bg=bg_c)
+            bar.configure(bg=C_ACCENT if active else bg_c)
+            ico.configure(bg=bg_c, fg=C_ACCENT if active else C_DIM)
+            title_l.configure(bg=bg_c, fg=C_TEXT if active else C_MUTED)
+            sub_l.configure(bg=bg_c, fg=C_MUTED if active else C_DIM)
+
+    for key, icon_ch, title_txt, sub_txt in nav_items:
+        row = tk.Frame(sidebar, bg=C_SIDEBAR, cursor="hand2")
+        row.pack(fill="x", padx=10, pady=3)
+        bar = tk.Frame(row, bg=C_SIDEBAR, width=3)
+        bar.pack(side="left", fill="y", pady=4)
+        inner = tk.Frame(row, bg=C_SIDEBAR, padx=10, pady=8)
+        inner.pack(side="left", fill="both", expand=True)
+        ico = tk.Label(inner, text=icon_ch, bg=C_SIDEBAR, fg=C_DIM, font=(ui_font, 11, "bold"), width=2)
+        ico.pack(side="left", padx=(0, 6))
+        txts = tk.Frame(inner, bg=C_SIDEBAR)
+        txts.pack(side="left", fill="x", expand=True)
+        tl = tk.Label(txts, text=title_txt, bg=C_SIDEBAR, fg=C_MUTED, font=(ui_font, 10, "bold"), anchor="w")
+        tl.pack(fill="x")
+        sl = tk.Label(txts, text=sub_txt, bg=C_SIDEBAR, fg=C_DIM, font=(ui_font, 8), anchor="w")
+        sl.pack(fill="x")
+
+        # Keep inner containers synced on background updates
+        def _sync_bg(r=row, inn=inner, tx=txts):
+            return r, inn, tx
+
+        def _make_click(k=key):
+            return lambda _e=None: select_page(k)
+
+        for w in (row, bar, inner, ico, txts, tl, sl):
+            w.bind("<ButtonRelease-1>", _make_click())
+
+        # Override row.configure proxy via tuple storing inner/txts too by using a small helper
+        nav_widgets[key] = (row, bar, ico, tl, sl)
+        row._extras = (inner, txts)  # type: ignore[attr-defined]
+
+    # Patch select_page so inner & txts also match row bg
+    _orig_select = select_page
+
+    def select_page(key: str) -> None:  # type: ignore[no-redef]
+        _orig_select(key)
+        for k, (row, *_rest) in nav_widgets.items():
+            bg_c = "#172233" if k == key else C_SIDEBAR
+            for extra in getattr(row, "_extras", ()):
+                extra.configure(bg=bg_c)
+
+    # ---- Sidebar Bottom Status Badge ----
+    side_foot = tk.Frame(sidebar, bg=C_SIDEBAR, padx=14, pady=14)
+    side_foot.pack(side="bottom", fill="x")
+    status_card = tk.Frame(side_foot, bg=C_CARD, highlightbackground=C_BORDER, highlightthickness=1, padx=12, pady=10)
+    status_card.pack(fill="x")
+    status_dot = tk.Label(
+        status_card,
+        text="●  Listo para compilar",
+        bg=C_CARD,
+        fg=C_ACCENT,
+        font=(ui_font, 9, "bold"),
+        anchor="w",
+    )
+    status_dot.pack(fill="x")
+    tk.Label(
+        status_card,
+        text="PS5 RADV · Zen 2 -O2 · 120 Hz\nAMD FSR 3.1.5 FG · 38 Trofeos",
+        bg=C_CARD,
+        fg=C_DIM,
+        font=(ui_font, 8),
+        justify="left",
+        anchor="w",
+    ).pack(fill="x", pady=(4, 0))
+
+    # ---- Main Area: Page Container (top) + Action & Console Dock (bottom) ----
+    page_host = tk.Frame(main_col, bg=C_BG, padx=22, pady=16)
+    page_host.pack(fill="both", expand=True)
+
+    def make_card(parent: tk.Widget, title: str, subtitle: str = "") -> tk.Frame:
+        wrap = tk.Frame(parent, bg=C_CARD, highlightbackground=C_BORDER, highlightthickness=1, padx=16, pady=12)
+        wrap.pack(fill="x", pady=(0, 12))
+        hdr = tk.Frame(wrap, bg=C_CARD)
+        hdr.pack(fill="x", pady=(0, 8))
+        tk.Label(hdr, text=title, bg=C_CARD, fg=C_TEXT, font=(ui_font, 10, "bold")).pack(side="left")
+        if subtitle:
+            tk.Label(hdr, text=f"  ·  {subtitle}", bg=C_CARD, fg=C_DIM, font=(ui_font, 9)).pack(side="left")
+        body = tk.Frame(wrap, bg=C_CARD)
+        body.pack(fill="x")
+        return body
+
+    def make_input_row(parent: tk.Frame, row_idx: int, label: str, key: str, is_dir: bool) -> None:
+        tk.Label(parent, text=label, bg=C_CARD, fg=C_MUTED, font=(ui_font, 9), anchor="w", width=21).grid(
+            row=row_idx, column=0, sticky="w", pady=4
         )
+        ent_wrap = tk.Frame(parent, bg=C_BORDER, padx=1, pady=1)
+        ent_wrap.grid(row=row_idx, column=1, sticky="ew", padx=(8, 8), pady=4)
+        ent = tk.Entry(
+            ent_wrap,
+            textvariable=vars_map[key],
+            bg=C_INPUT,
+            fg=C_TEXT,
+            insertbackground=C_ACCENT,
+            relief="flat",
+            font=(ui_font, 9),
+        )
+        ent.pack(fill="x", ipady=5, padx=6)
+        ent.bind("<FocusIn>", lambda _e, w=ent_wrap: w.configure(bg=C_ACCENT))
+        ent.bind("<FocusOut>", lambda _e, w=ent_wrap: w.configure(bg=C_BORDER))
 
         def pick() -> None:
             chosen = filedialog.askdirectory() if is_dir else filedialog.askopenfilename()
             if chosen:
                 vars_map[key].set(chosen)
 
-        tk.Button(parent, text="Examinar", command=pick, bg=btn_bg, fg=fg).grid(row=row, column=2, pady=2)
+        ModernButton(
+            parent,
+            "Examinar",
+            pick,
+            bg=C_CARD_ALT,
+            hover_bg="#243248",
+            fg=C_TEXT,
+            font_spec=(ui_font, 8, "bold"),
+            padx=10,
+            pady=5,
+        ).grid(row=row_idx, column=2, pady=4)
 
-    tab_build.columnconfigure(1, weight=1)
-    add_row(tab_build, 0, "Juego base (.xci/.nsp):", "game", False)
-    add_row(tab_build, 1, "Update (.nsp opcional):", "update", False)
-    add_row(tab_build, 2, "Switch prod.keys:", "keys", False)
-    add_row(tab_build, 3, "O ExeFS extraído:", "exefs", True)
-    add_row(tab_build, 4, "O RomFS extraído:", "romfs", True)
-    add_row(tab_build, 5, "Carpeta caché shaders:", "shaders", True)
-    add_row(tab_build, 6, "Carpeta de salida:", "out", True)
+    # ---------------- PAGE 1: COMPILAR & SHADERS ----------------
+    p_build = tk.Frame(page_host, bg=C_BG)
+    pages["build"] = p_build
 
-    opts = tk.Frame(tab_build, bg=bg)
-    opts.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(6, 2))
-    tk.Checkbutton(
-        opts,
-        text="Íconos PlayStation por defecto (△ ○ × □, ○=A)",
-        variable=bool_map["prompts"],
-        bg=bg,
-        fg=fg,
-        selectcolor=entry_bg,
-        activebackground=bg,
-        activeforeground=fg,
-    ).pack(side="left", padx=(0, 12))
-    tk.Checkbutton(
-        opts,
-        text="Pre-traducir Shaders PS5 (RADV)",
-        variable=bool_map["pretranslate_shaders"],
-        bg=bg,
-        fg=fg,
-        selectcolor=entry_bg,
-        activebackground=bg,
-        activeforeground=fg,
-    ).pack(side="left")
-
-    presets = tk.Frame(tab_build, bg=bg)
-    presets.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(4, 2))
-    tk.Label(presets, text="Resolución:", bg=bg, fg=fg).pack(side="left")
-    ttk.Combobox(presets, textvariable=vars_map["res"], values=("2560x1440", "1920x1080"), width=10, state="readonly").pack(
-        side="left", padx=(4, 8)
+    tk.Label(p_build, text="Compilar & Pre-traducir Shaders", bg=C_BG, fg=C_TEXT, font=(ui_font, 15, "bold"), anchor="w").pack(
+        fill="x"
     )
-    tk.Label(presets, text="Hz:", bg=bg, fg=fg).pack(side="left")
-    ttk.Combobox(presets, textvariable=vars_map["hz"], values=("120", "60"), width=4, state="readonly").pack(
-        side="left", padx=(4, 8)
-    )
-    tk.Label(presets, text="FSR3 FG:", bg=bg, fg=fg).pack(side="left")
-    ttk.Combobox(presets, textvariable=vars_map["frame_gen"], values=("fsr3", "off"), width=5, state="readonly").pack(
-        side="left", padx=(4, 8)
-    )
-    tk.Label(presets, text="Escala:", bg=bg, fg=fg).pack(side="left")
-    ttk.Combobox(presets, textvariable=vars_map["scale"], values=("100", "game", "75"), width=5, state="readonly").pack(
-        side="left", padx=(4, 8)
-    )
-    tk.Label(presets, text="Idioma:", bg=bg, fg=fg).pack(side="left")
-    ttk.Combobox(
-        presets,
-        textvariable=vars_map["lang"],
-        values=("es-419", "es-ES", "en-US", "fr-FR", "de-DE", "ja-JP"),
-        width=6,
-        state="readonly",
-    ).pack(side="left", padx=4)
-
-    # ---------------- TAB 2: MODS ----------------
-    tab_mods = tk.Frame(notebook, bg=bg, padx=10, pady=8)
-    notebook.add(tab_mods, text="2. MODS (RomFS)")
-
     tk.Label(
-        tab_mods,
-        text="Agrega carpetas o archivos .zip de mods RomFS (se instalan en /data/totk-ps5/mods/ y se gestionan desde Touchpad+Options):",
-        bg=bg,
-        fg=fg,
+        p_build,
+        text="Genera eboot.bin (-O2 Zen 2), íconos PlayStation y caché RADV + mvprev desde tu copia legal del juego.",
+        bg=C_BG,
+        fg=C_MUTED,
+        font=(ui_font, 9),
         anchor="w",
-    ).pack(fill="x", pady=(0, 4))
+    ).pack(fill="x", pady=(2, 12))
 
-    mods_list = tk.Listbox(tab_mods, height=7, bg=entry_bg, fg=fg, selectbackground=accent, selectforeground="#09110f")
-    mods_list.pack(fill="both", expand=True, pady=4)
+    c_src = make_card(p_build, "Origen del Juego", "Usa .xci/.nsp + prod.keys o carpetas extraídas")
+    c_src.columnconfigure(1, weight=1)
+    make_input_row(c_src, 0, "Juego base (.xci / .nsp)", "game", False)
+    make_input_row(c_src, 1, "Update (.nsp opcional)", "update", False)
+    make_input_row(c_src, 2, "Switch prod.keys", "keys", False)
+    make_input_row(c_src, 3, "O ExeFS extraído", "exefs", True)
+    make_input_row(c_src, 4, "O RomFS extraído", "romfs", True)
+    make_input_row(c_src, 5, "Caché shaders (opcional)", "shaders", True)
+    make_input_row(c_src, 6, "Carpeta de salida", "out", True)
 
-    mod_btns = tk.Frame(tab_mods, bg=bg)
-    mod_btns.pack(fill="x", pady=4)
+    c_opt = make_card(p_build, "Perfil PS5", "Valores recomendados para 1440p @ 120 Hz + AMD FSR 3.1.5")
+    toggles = tk.Frame(c_opt, bg=C_CARD)
+    toggles.pack(fill="x", pady=(0, 8))
+    for txt, bkey in (
+        ("Íconos PlayStation por defecto (△ ○ × □, ○=A)", "prompts"),
+        ("Pre-traducir Shaders PS5 RADV + mvprev", "pretranslate_shaders"),
+    ):
+        tk.Checkbutton(
+            toggles,
+            text=txt,
+            variable=bool_map[bkey],
+            bg=C_CARD,
+            fg=C_TEXT,
+            selectcolor=C_INPUT,
+            activebackground=C_CARD,
+            activeforeground=C_ACCENT,
+            highlightthickness=0,
+            font=(ui_font, 9),
+            cursor="hand2",
+        ).pack(side="left", padx=(0, 22))
+
+    presets = tk.Frame(c_opt, bg=C_CARD)
+    presets.pack(fill="x")
+    for lbl, vkey, vals, w in (
+        ("Resolución", "res", ("2560x1440", "1920x1080"), 11),
+        ("Refresco (Hz)", "hz", ("120", "60"), 5),
+        ("Frame Gen", "frame_gen", ("fsr3", "off"), 6),
+        ("Escala 3D", "scale", ("game", "100", "75"), 6),
+        ("Idioma", "lang", ("es-419", "es-ES", "en-US", "fr-FR", "de-DE", "ja-JP"), 7),
+    ):
+        cell = tk.Frame(presets, bg=C_CARD)
+        cell.pack(side="left", padx=(0, 14))
+        tk.Label(cell, text=lbl, bg=C_CARD, fg=C_DIM, font=(ui_font, 8, "bold"), anchor="w").pack(fill="x", pady=(0, 3))
+        ttk.Combobox(cell, textvariable=vars_map[vkey], values=vals, width=w, state="readonly", style="Dark.TCombobox").pack()
+
+    # ---------------- PAGE 2: MODS ----------------
+    p_mods = tk.Frame(page_host, bg=C_BG)
+    pages["mods"] = p_mods
+
+    tk.Label(p_mods, text="Gestor de MODS (RomFS)", bg=C_BG, fg=C_TEXT, font=(ui_font, 15, "bold"), anchor="w").pack(fill="x")
+    tk.Label(
+        p_mods,
+        text="Se empaquetan en /data/totk-ps5/mods/ y se activan/desactivan desde Touchpad + Options en tu PS5.",
+        bg=C_BG,
+        fg=C_MUTED,
+        font=(ui_font, 9),
+        anchor="w",
+    ).pack(fill="x", pady=(2, 12))
+
+    c_mods = make_card(p_mods, "Cola de Mods a Instalar", "Carpetas o archivos .zip")
+    lb_wrap = tk.Frame(c_mods, bg=C_BORDER, padx=1, pady=1)
+    lb_wrap.pack(fill="x", pady=(0, 10))
+    mods_list = tk.Listbox(
+        lb_wrap,
+        height=10,
+        bg=C_INPUT,
+        fg=C_TEXT,
+        selectbackground=C_ACCENT,
+        selectforeground=C_ACCENT_TXT,
+        relief="flat",
+        font=(ui_font, 9),
+        highlightthickness=0,
+    )
+    mods_list.pack(fill="both", expand=True, padx=4, pady=4)
+
+    mod_btns = tk.Frame(c_mods, bg=C_CARD)
+    mod_btns.pack(fill="x")
 
     def add_mod_folder() -> None:
-        chosen = filedialog.askdirectory(title="Seleccionar carpeta de Mod RomFS")
-        if chosen:
-            mods_list.insert("end", chosen)
+        d = filedialog.askdirectory(title="Seleccionar carpeta de Mod RomFS")
+        if d:
+            mods_list.insert("end", d)
 
     def add_mod_zip() -> None:
-        chosen = filedialog.askopenfilename(title="Seleccionar Mod (.zip)", filetypes=[("ZIP archives", "*.zip")])
-        if chosen:
-            mods_list.insert("end", chosen)
+        f = filedialog.askopenfilename(title="Seleccionar archivo .zip de Mod", filetypes=[("ZIP archives", "*.zip")])
+        if f:
+            mods_list.insert("end", f)
 
     def remove_mod() -> None:
         for idx in reversed(mods_list.curselection()):
             mods_list.delete(idx)
 
-    tk.Button(mod_btns, text="+ Carpeta Mod", command=add_mod_folder, bg=btn_bg, fg=fg).pack(side="left", padx=(0, 6))
-    tk.Button(mod_btns, text="+ Mod (.zip)", command=add_mod_zip, bg=btn_bg, fg=fg).pack(side="left", padx=(0, 6))
-    tk.Button(mod_btns, text="Quitar seleccionado", command=remove_mod, bg=btn_bg, fg=fg).pack(side="left")
+    ModernButton(mod_btns, "+ Carpeta de Mod", add_mod_folder, font_spec=(ui_font, 9, "bold")).pack(side="left", padx=(0, 8))
+    ModernButton(mod_btns, "+ Mod (.zip)", add_mod_zip, font_spec=(ui_font, 9, "bold")).pack(side="left", padx=(0, 8))
+    ModernButton(mod_btns, "Quitar seleccionado", remove_mod, fg=C_DANGER, font_spec=(ui_font, 9, "bold")).pack(side="left")
 
-    # ---------------- TAB 3: PS5 FTP Deploy ----------------
-    tab_ftp = tk.Frame(notebook, bg=bg, padx=10, pady=8)
-    notebook.add(tab_ftp, text="3. Enviar a PS5 (FTP)")
+    # ---------------- PAGE 3: ENVIAR A PS5 (FTP) ----------------
+    p_ftp = tk.Frame(page_host, bg=C_BG)
+    pages["ftp"] = p_ftp
 
-    ftp_row = tk.Frame(tab_ftp, bg=bg)
-    ftp_row.pack(fill="x", pady=4)
-    tk.Label(ftp_row, text="IP PS5 (ftpsrv):", bg=bg, fg=fg).pack(side="left")
-    tk.Entry(ftp_row, textvariable=vars_map["ftp_host"], width=18, bg=entry_bg, fg=fg, insertbackground=fg).pack(
-        side="left", padx=(6, 14)
+    tk.Label(p_ftp, text="Despliegue Directo a PS5 (FTP)", bg=C_BG, fg=C_TEXT, font=(ui_font, 15, "bold"), anchor="w").pack(
+        fill="x"
     )
-    tk.Label(ftp_row, text="Puerto:", bg=bg, fg=fg).pack(side="left")
-    tk.Entry(ftp_row, textvariable=vars_map["ftp_port"], width=7, bg=entry_bg, fg=fg, insertbackground=fg).pack(
-        side="left", padx=6
-    )
-
-    ftp_opts = tk.Frame(tab_ftp, bg=bg)
-    ftp_opts.pack(fill="x", pady=6)
-    tk.Checkbutton(
-        ftp_opts,
-        text="Subir caché de shaders",
-        variable=bool_map["ftp_shaders"],
-        bg=bg,
-        fg=fg,
-        selectcolor=entry_bg,
-        activebackground=bg,
-        activeforeground=fg,
-    ).pack(side="left", padx=(0, 14))
-    tk.Checkbutton(
-        ftp_opts,
-        text="Sobrescribir totk.ini",
-        variable=bool_map["ftp_ini"],
-        bg=bg,
-        fg=fg,
-        selectcolor=entry_bg,
-        activebackground=bg,
-        activeforeground=fg,
-    ).pack(side="left", padx=(0, 14))
-    tk.Checkbutton(
-        ftp_opts,
-        text="Subir romfs.bin completo (15.86 GiB)",
-        variable=bool_map["ftp_romfs"],
-        bg=bg,
-        fg=fg,
-        selectcolor=entry_bg,
-        activebackground=bg,
-        activeforeground=fg,
-    ).pack(side="left")
-
     tk.Label(
-        tab_ftp,
-        text="Nota: Cierra TOTK en la PS5 antes de subir eboot.bin. Nunca toca PPSA99198 (OOT) ni otros títulos.",
-        bg=bg,
-        fg="#9bc4b5",
+        p_ftp,
+        text="Solo escribe en /data/homebrew/PPSA99199 y /data/totk-ps5. Nunca toca otros juegos ni partidas existentes.",
+        bg=C_BG,
+        fg=C_MUTED,
+        font=(ui_font, 9),
         anchor="w",
-    ).pack(fill="x", pady=(6, 0))
+    ).pack(fill="x", pady=(2, 12))
 
-    # ---------------- TAB 4: Layout PS5 ----------------
-    tab_layout = tk.Frame(notebook, bg=bg, padx=10, pady=8)
-    notebook.add(tab_layout, text="4. Layout PS5")
+    c_ftp = make_card(p_ftp, "Conexión ftpsrv", "Abre ftpsrv en tu PS5 e ingresa su IP local")
+    ftp_row = tk.Frame(c_ftp, bg=C_CARD)
+    ftp_row.pack(fill="x", pady=(0, 10))
+    tk.Label(ftp_row, text="IP de la PS5", bg=C_CARD, fg=C_MUTED, font=(ui_font, 9)).pack(side="left", padx=(0, 8))
+    ip_wrap = tk.Frame(ftp_row, bg=C_BORDER, padx=1, pady=1)
+    ip_wrap.pack(side="left", padx=(0, 18))
+    ip_ent = tk.Entry(
+        ip_wrap,
+        textvariable=vars_map["ftp_host"],
+        width=20,
+        bg=C_INPUT,
+        fg=C_TEXT,
+        insertbackground=C_ACCENT,
+        relief="flat",
+        font=(ui_font, 10),
+    )
+    ip_ent.pack(ipady=5, padx=8)
+    ip_ent.bind("<FocusIn>", lambda _e: ip_wrap.configure(bg=C_ACCENT))
+    ip_ent.bind("<FocusOut>", lambda _e: ip_wrap.configure(bg=C_BORDER))
 
-    layout_box = scrolledtext.ScrolledText(tab_layout, height=13, bg="#0b1110", fg="#c9e4d8", font=("Monospace", 8))
+    tk.Label(ftp_row, text="Puerto", bg=C_CARD, fg=C_MUTED, font=(ui_font, 9)).pack(side="left", padx=(0, 8))
+    pt_wrap = tk.Frame(ftp_row, bg=C_BORDER, padx=1, pady=1)
+    pt_wrap.pack(side="left")
+    tk.Entry(
+        pt_wrap,
+        textvariable=vars_map["ftp_port"],
+        width=8,
+        bg=C_INPUT,
+        fg=C_TEXT,
+        insertbackground=C_ACCENT,
+        relief="flat",
+        font=(ui_font, 10),
+    ).pack(ipady=5, padx=8)
+
+    for txt, bkey in (
+        ("Subir shader-cache.pack (caché RADV + mvprev pre-traducido)", "ftp_shaders"),
+        ("Subir / actualizar /data/totk-ps5/totk.ini", "ftp_ini"),
+        ("Subir también romfs.bin (~15.86 GiB; necesario solo en la primera instalación)", "ftp_romfs"),
+    ):
+        tk.Checkbutton(
+            c_ftp,
+            text=txt,
+            variable=bool_map[bkey],
+            bg=C_CARD,
+            fg=C_TEXT,
+            selectcolor=C_INPUT,
+            activebackground=C_CARD,
+            activeforeground=C_ACCENT,
+            highlightthickness=0,
+            font=(ui_font, 9),
+            anchor="w",
+            cursor="hand2",
+        ).pack(fill="x", pady=3)
+
+    # ---------------- PAGE 4: LAYOUT PS5 ----------------
+    p_layout = tk.Frame(page_host, bg=C_BG)
+    pages["layout"] = p_layout
+
+    tk.Label(p_layout, text="Estructura Exacta en PS5", bg=C_BG, fg=C_TEXT, font=(ui_font, 15, "bold"), anchor="w").pack(
+        fill="x"
+    )
+    tk.Label(
+        p_layout,
+        text="Referencia de carpetas para copiar por USB o FTP manual (ShadowMountPlus / Itemzflow).",
+        bg=C_BG,
+        fg=C_MUTED,
+        font=(ui_font, 9),
+        anchor="w",
+    ).pack(fill="x", pady=(2, 12))
+
+    lay_card = tk.Frame(p_layout, bg=C_TERM, highlightbackground=C_BORDER, highlightthickness=1, padx=8, pady=8)
+    lay_card.pack(fill="both", expand=True)
+    layout_box = scrolledtext.ScrolledText(
+        lay_card,
+        height=16,
+        bg=C_TERM,
+        fg="#CBD5E1",
+        relief="flat",
+        borderwidth=0,
+        font=(mono_font, 9),
+    )
     layout_box.insert("1.0", PS5_LAYOUT_TEXT)
     layout_box.config(state="disabled")
     layout_box.pack(fill="both", expand=True)
 
-    # ---------------- Shared Log & Action Buttons ----------------
-    log_box = scrolledtext.ScrolledText(root, height=13, bg="#0b1110", fg="#c9e4d8", font=("Monospace", 9))
-    log_box.pack(fill="both", expand=True, padx=12, pady=(6, 8))
+    # ---- Bottom Persistent Console & Action Bar ----
+    dock = tk.Frame(main_col, bg=C_BG, padx=22, pady=12)
+    dock.pack(side="bottom", fill="x")
+
+    pbar = ttk.Progressbar(dock, mode="indeterminate", style="Zonai.Horizontal.TProgressbar")
+    pbar.pack(fill="x", pady=(0, 8))
+
+    term_card = tk.Frame(dock, bg=C_TERM, highlightbackground=C_BORDER, highlightthickness=1, padx=8, pady=6)
+    term_card.pack(fill="x", pady=(0, 10))
+    log_box = scrolledtext.ScrolledText(
+        term_card,
+        height=8,
+        bg=C_TERM,
+        fg="#CBD5E1",
+        insertbackground=C_ACCENT,
+        relief="flat",
+        borderwidth=0,
+        font=(mono_font, 9),
+    )
+    log_box.tag_config("ok", foreground=C_ACCENT)
+    log_box.tag_config("info", foreground=C_BLUE)
+    log_box.tag_config("gold", foreground=C_GOLD)
+    log_box.tag_config("err", foreground=C_DANGER)
+    log_box.pack(fill="x")
 
     q: queue.Queue[str | None] = queue.Queue()
-    action_buttons: list[tk.Button] = []
+    action_buttons: list[ModernButton] = []
 
-    def set_busy(busy: bool) -> None:
-        state = "disabled" if busy else "normal"
+    def set_busy(busy: bool, msg: str = "") -> None:
         for b in action_buttons:
-            b.config(state=state)
+            b.set_enabled(not busy)
+        if busy:
+            status_dot.configure(text=f"●  {msg or 'Trabajando...'}", fg=C_GOLD)
+            pbar.start(14)
+        else:
+            status_dot.configure(text="●  Listo para compilar", fg=C_ACCENT)
+            pbar.stop()
+
+    def _insert_colored(line: str) -> None:
+        tag = None
+        low = line.lower()
+        if line.startswith("[ok]") or "passed" in low or "finalizado correctamente" in low:
+            tag = "ok"
+        elif line.startswith("[err]") or "error" in low or "failed" in low or "fail" in low:
+            tag = "err"
+        elif line.startswith("[ftp]") or line.startswith(">>>"):
+            tag = "gold"
+        elif line.startswith("[ps5-totk]") or line.startswith("[check]"):
+            tag = "info"
+        if tag:
+            log_box.insert("end", line, tag)
+        else:
+            log_box.insert("end", line)
+        log_box.see("end")
 
     def pump() -> None:
         try:
@@ -286,14 +664,13 @@ def launch_gui() -> int:
                 if item is None:
                     set_busy(False)
                     break
-                log_box.insert("end", item)
-                log_box.see("end")
+                _insert_colored(item)
         except queue.Empty:
             pass
-        root.after(120, pump)
+        root.after(100, pump)
 
     def build_cli_cmd(*, deploy_ftp: bool, deploy_only: bool = False) -> list[str]:
-        cmd = [str(paths.python_bin), "-u", "-m", "builder.cli", "--out", vars_map["out"].get().strip()]
+        cmd = [str(paths.python_bin), "-P", "-u", "-m", "builder.cli", "--out", vars_map["out"].get().strip()]
         if deploy_only:
             cmd.append("--deploy-only")
         else:
@@ -314,11 +691,16 @@ def launch_gui() -> int:
             if bool_map["pretranslate_shaders"].get():
                 cmd.append("--pretranslate-shaders")
             cmd += [
-                "--res", vars_map["res"].get(),
-                "--hz", vars_map["hz"].get(),
-                "--frame-gen", vars_map["frame_gen"].get(),
-                "--scale", vars_map["scale"].get(),
-                "--lang", vars_map["lang"].get(),
+                "--res",
+                vars_map["res"].get(),
+                "--hz",
+                vars_map["hz"].get(),
+                "--frame-gen",
+                vars_map["frame_gen"].get(),
+                "--scale",
+                vars_map["scale"].get(),
+                "--lang",
+                vars_map["lang"].get(),
             ]
             for i in range(mods_list.size()):
                 cmd += ["--mod", mods_list.get(i)]
@@ -334,77 +716,101 @@ def launch_gui() -> int:
         return cmd
 
     def run_cmd_async(cmd: list[str], label: str) -> None:
-        set_busy(True)
+        set_busy(True, label)
         log_box.delete("1.0", "end")
-        log_box.insert("end", f">>> {label}\n")
+        _insert_colored(f">>> {label}\n")
 
         def worker() -> None:
-            proc = subprocess.Popen(
-                cmd,
-                cwd=str(paths.project_root),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                q.put(line)
-            rc = proc.wait()
-            q.put(f"\n=== {label} terminó con código {rc} ===\n")
-            q.put(None)
+            try:
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    q.put(line)
+                rc = proc.wait()
+                q.put(f"\n{'[ok] Proceso finalizado correctamente.' if rc == 0 else f'[err] Error (código {rc}).'}\n")
+            except Exception as exc:
+                q.put(f"\n[err] {exc}\n")
+            finally:
+                q.put(None)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    btn_row = tk.Frame(root, bg=bg)
-    btn_row.pack(pady=(0, 10))
+    def _validate_inputs(*, need_ftp: bool, deploy_only: bool) -> bool:
+        if not deploy_only:
+            if not vars_map["game"].get().strip() and not vars_map["exefs"].get().strip():
+                messagebox.showerror("Faltan archivos", "Selecciona un juego base (.xci/.nsp) o una carpeta ExeFS extraída.")
+                select_page("build")
+                return False
+            if vars_map["game"].get().strip() and not vars_map["keys"].get().strip():
+                messagebox.showerror("Falta prod.keys", "Para extraer archivos .xci/.nsp necesitas seleccionar tu Switch prod.keys.")
+                select_page("build")
+                return False
+        if need_ftp and not vars_map["ftp_host"].get().strip():
+            messagebox.showerror("Falta IP de PS5", "Ingresa la IP local de tu PS5 en la pestaña 'Enviar a PS5'.")
+            select_page("ftp")
+            return False
+        return True
 
-    b1 = tk.Button(
-        btn_row,
-        text="Compilar PS5 (PPSA99199)",
-        command=lambda: run_cmd_async(build_cli_cmd(deploy_ftp=False), "Compilar PS5"),
-        bg=accent,
-        fg="#09110f",
-        font=("Sans", 9, "bold"),
-        padx=12,
-        pady=5,
+    def on_check() -> None:
+        run_cmd_async([str(paths.python_bin), "-P", "-u", "-m", "builder.cli", "--check"], "Verificando Toolchain PS5...")
+
+    def on_build() -> None:
+        if not _validate_inputs(need_ftp=False, deploy_only=False):
+            return
+        run_cmd_async(build_cli_cmd(deploy_ftp=False), "Compilando TOTK PS5 (-O2)...")
+
+    def on_build_and_ftp() -> None:
+        if not _validate_inputs(need_ftp=True, deploy_only=False):
+            return
+        run_cmd_async(build_cli_cmd(deploy_ftp=True), "Compilando + Enviando a PS5...")
+
+    def on_deploy_only() -> None:
+        if not _validate_inputs(need_ftp=True, deploy_only=True):
+            return
+        run_cmd_async(build_cli_cmd(deploy_ftp=True, deploy_only=True), "Subiendo salida a PS5 (FTP)...")
+
+    bar_btns = tk.Frame(dock, bg=C_BG)
+    bar_btns.pack(fill="x")
+
+    b_check = ModernButton(bar_btns, "Verificar Kit", on_check, font_spec=(ui_font, 9, "bold"), padx=14, pady=9)
+    b_check.pack(side="left", padx=(0, 8))
+    b_ftp = ModernButton(bar_btns, "Solo Subir FTP", on_deploy_only, font_spec=(ui_font, 9, "bold"), padx=14, pady=9)
+    b_ftp.pack(side="left")
+
+    b_both = ModernButton(
+        bar_btns,
+        "⚡  Compilar + Enviar a PS5",
+        on_build_and_ftp,
+        bg=C_BLUE,
+        hover_bg=C_BLUE_HOV,
+        fg="#05131C",
+        border=C_BLUE,
+        font_spec=(ui_font, 10, "bold"),
+        padx=18,
+        pady=9,
     )
-    b1.pack(side="left", padx=5)
-
-    b2 = tk.Button(
-        btn_row,
-        text="Compilar + Enviar Todo a PS5 (FTP)",
-        command=lambda: run_cmd_async(build_cli_cmd(deploy_ftp=True), "Compilar + Enviar a PS5"),
-        bg="#3898ff",
-        fg="#061018",
-        font=("Sans", 9, "bold"),
-        padx=12,
-        pady=5,
+    b_both.pack(side="right")
+    b_build = ModernButton(
+        bar_btns,
+        "▶  Compilar TOTK PS5",
+        on_build,
+        bg=C_ACCENT,
+        hover_bg=C_ACCENT_HOV,
+        fg=C_ACCENT_TXT,
+        border=C_ACCENT,
+        font_spec=(ui_font, 10, "bold"),
+        padx=18,
+        pady=9,
     )
-    b2.pack(side="left", padx=5)
+    b_build.pack(side="right", padx=(0, 10))
+    action_buttons.extend([b_check, b_ftp, b_build, b_both])
 
-    b3 = tk.Button(
-        btn_row,
-        text="Enviar Salida por FTP",
-        command=lambda: run_cmd_async(build_cli_cmd(deploy_ftp=True, deploy_only=True), "Enviar por FTP"),
-        bg=btn_bg,
-        fg=fg,
-        padx=10,
-        pady=5,
-    )
-    b3.pack(side="left", padx=5)
-
-    def check_kit() -> None:
-        rc = cli_main(["--check"])
-        messagebox.showinfo("Kit Check", "PS5 TOTK Builder Kit OK!" if rc == 0 else "Kit check failed")
-
-    b4 = tk.Button(btn_row, text="Self-Check Kit", command=check_kit, bg=btn_bg, fg=fg, padx=10, pady=5)
-    b4.pack(side="left", padx=5)
-
-    action_buttons.extend([b1, b2, b3, b4])
-    root.after(120, pump)
+    select_page("build")
+    _insert_colored(f"[ps5-totk] PS5 TOTK Builder listo ({TITLE_ID}). Selecciona tu juego y presiona Compilar.\n")
+    root.after(100, pump)
     root.mainloop()
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(launch_gui())
+    sys.exit(run_gui())
