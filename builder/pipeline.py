@@ -147,6 +147,22 @@ def default_kit_paths(project_root: Path | None = None) -> KitPaths:
     )
 
 
+def prepare_thread_count(cpus: int | None = None, asked: int = 0) -> int:
+    """Return 75% logical-CPU thermal cap for shader preparation (adapted from Triforce v0.8.3).
+
+    Leaves thermal/system headroom during heavy shader translation and pipeline warming while
+    allowing explicit override via `asked > 0` or `PS5_PREPARE_THREADS` / `TOTK_PREPARE_THREADS`.
+    """
+    n = int(cpus if cpus is not None else (os.cpu_count() or 4))
+    if n < 1:
+        n = 1
+    if asked > 0:
+        return min(64, int(asked))
+    t = n - (n // 4)
+    half = max(1, n // 2)
+    return min(64, max(half, t))
+
+
 def run_cmd(cmd: list[str], what: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     print(f"[ps5-totk] {what}")
     res = subprocess.run(cmd, cwd=str(cwd) if cwd else None, capture_output=True, text=True)
@@ -502,16 +518,24 @@ def pretranslate_ps5_shaders(
 
     env = os.environ.copy()
     env["TOTK_ZERO_LOCALS"] = "0"
-    env["TOTK_XLATE_PROCS"] = str(max(1, min(jobs, 10)))
+    prep_override_raw = env.get("PS5_PREPARE_THREADS") or env.get("TOTK_PREPARE_THREADS") or ""
+    prep_override = int(prep_override_raw) if prep_override_raw.isdigit() else 0
+    prep_threads = prepare_thread_count(os.cpu_count() or jobs, asked=prep_override)
+    xlate_procs = max(1, min(jobs, prep_threads, 10))
+    env["TOTK_XLATE_PROCS"] = str(xlate_procs)
+    env["TOTK_PREPARE_THREADS"] = str(prep_threads)
     if prep_mvprev:
         env["TOTK_XLATE"] = str(stage_dir / "totk_xlate")
         env["TOTK_SHADER_CACHE"] = str(stage_dir / "shader-cache")
         if (stage_dir / "totk_xlate.id").is_file():
             xlate_id = (stage_dir / "totk_xlate.id").read_text(encoding="utf-8").strip() or xlate_id
         env["TOTK_XLATE_ID"] = xlate_id
-        print("[ps5-totk] Translating all shaders + mvprev for PS5 RADV (TOTK_ZERO_LOCALS=0)...")
+        print(
+            f"[ps5-totk] Translating all shaders + mvprev for PS5 RADV "
+            f"(TOTK_ZERO_LOCALS=0, workers={prep_threads}, xlate_procs={xlate_procs})..."
+        )
         res = subprocess.run(
-            [str(stage_dir / "prep_mvprev"), str(stage_dir), str(max(2, min(jobs + 2, 12))), str(max(1, min(jobs, 10)))],
+            [str(stage_dir / "prep_mvprev"), str(stage_dir), str(max(2, min(prep_threads, 12))), str(xlate_procs)],
             cwd=str(stage_dir),
             env=env,
         )

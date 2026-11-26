@@ -316,6 +316,64 @@ def prepare_ps5_override(src: Path, rel: Path) -> Path:
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(txt, encoding="utf-8")
         return dst
+    if rel_posix == "vk_astc.c":
+        txt = src.read_text(encoding="utf-8")
+        old_inc = '#include "astc_decode_spv.h"'
+        new_inc = '#include "ps5_astc_decode_spv.h"'
+        if old_inc not in txt:
+            raise RuntimeError("PS5 vk_astc.c override failed: astc_decode_spv.h include not found")
+        txt = txt.replace(old_inc, new_inc, 1)
+        dst = override_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(txt, encoding="utf-8")
+        return dst
+    if rel_posix == "vk_pipeline.c":
+        txt = src.read_text(encoding="utf-8")
+        repls = [
+            (
+                '#include "tex.h"',
+                '#include "tex.h"\n#include "prepare_threads.h"\n#include "spirv_radv_mesh_nwg.h"',
+            ),
+            (
+                '    uint64_t demoted_n = 0;\n'
+                '    uint32_t *demoted = spirv_demote(w, words, &demoted_n);\n'
+                '    if (demoted) free(fixed), fixed = demoted, w = demoted, words = demoted_n;',
+                '    uint64_t demoted_n = 0;\n'
+                '    uint32_t *demoted = spirv_demote(w, words, &demoted_n);\n'
+                '    if (demoted) free(fixed), fixed = demoted, w = demoted, words = demoted_n;\n'
+                '    /* RADV < 26.2.5 MeshEXT NumWorkgroups liveness guard (PS5 ships Mesa RADV 26.2.0; Longshot #2338). */\n'
+                '    if (vk_caps.mesa && vk_caps.amd) {\n'
+                '        VkCtx *vc = vk_ctx();\n'
+                '        if (vc && vc->props.driverVersion < VK_MAKE_VERSION(26, 2, 5)) {\n'
+                '            uint64_t nwg_n = 0;\n'
+                '            uint32_t *nwg = spirv_radv_keep_num_workgroups(w, words, &nwg_n);\n'
+                '            if (nwg) free(fixed), fixed = nwg, w = nwg, words = nwg_n;\n'
+                '        }\n'
+                '    }',
+            ),
+            (
+                '    int cpus = (int)plat_cpu_usable(), k = 0;',
+                '    const char *pt_env = cfg_get("TOTK_PREPARE_THREADS");\n'
+                '    if (!pt_env || !*pt_env) pt_env = cfg_get("PS5_PREPARE_THREADS");\n'
+                '    int cpus = ps5_prepare_threads((int)plat_cpu_usable(), pt_env && *pt_env ? atoi(pt_env) : 0), k = 0;',
+            ),
+            (
+                '    int cpus = (int)plat_cpu_usable();\n'
+                '    const char *pe = cfg_get("TOTK_PREWARM_XLATE");',
+                '    const char *pt_env = cfg_get("TOTK_PREPARE_THREADS");\n'
+                '    if (!pt_env || !*pt_env) pt_env = cfg_get("PS5_PREPARE_THREADS");\n'
+                '    int cpus = ps5_prepare_threads((int)plat_cpu_usable(), pt_env && *pt_env ? atoi(pt_env) : 0);\n'
+                '    const char *pe = cfg_get("TOTK_PREWARM_XLATE");',
+            ),
+        ]
+        for old, new in repls:
+            if old not in txt:
+                raise RuntimeError(f"PS5 vk_pipeline.c override failed: missing anchor {old[:60]!r}")
+            txt = txt.replace(old, new, 1)
+        dst = override_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(txt, encoding="utf-8")
+        return dst
     if rel_posix == "cfg.c":
         txt = src.read_text(encoding="utf-8")
         repls = [
