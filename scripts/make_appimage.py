@@ -216,11 +216,15 @@ def build_appimage() -> Path:
     if not APPIMAGETOOL.is_file():
         raise FileNotFoundError(f"appimagetool not found at {APPIMAGETOOL}")
 
+    tmp_out = OUT_APPIMAGE.with_suffix(".AppImage.tmp")
+    if tmp_out.exists():
+        tmp_out.unlink()
     env = os.environ.copy()
     env["ARCH"] = "x86_64"
-    cmd = [str(APPIMAGETOOL), "--no-appstream", str(APPDIR), str(OUT_APPIMAGE)]
+    cmd = [str(APPIMAGETOOL), "--no-appstream", str(APPDIR), str(tmp_out)]
     print(f"[run] {' '.join(cmd)}")
     subprocess.run(cmd, env=env, check=True)
+    os.replace(tmp_out, OUT_APPIMAGE)
     size_mb = OUT_APPIMAGE.stat().st_size / (1024 * 1024)
     print(f"[ok] Built AppImage: {OUT_APPIMAGE} ({size_mb:.1f} MiB)")
     return OUT_APPIMAGE
