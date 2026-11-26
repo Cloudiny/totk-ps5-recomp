@@ -15,11 +15,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
 import zipfile
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -353,6 +355,72 @@ def chunk_files(gen_dir: Path, mod: str) -> list[Path]:
     return [d / n for n in names]
 
 
+_HOT_DEF_RE = re.compile(rb"void (f_[0-9a-f]+)\(Cpu \*c\) \{")
+_HOT_CALL_RE = re.compile(rb"f_[0-9a-f]+\(c\)")
+_IS_WORD_BYTE = bytearray(256)
+for _b in b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_":
+    _IS_WORD_BYTE[_b] = 1
+_RUNTIME_HOT_SYMS = [
+    "vk_exec_record",
+    "rec_run",
+    "nvnCommandBufferCallCommands",
+    "rt_dispatch",
+    "rt_svc",
+    "kern_checkpoint",
+    "plat_now_ns",
+    "plat_mutex_lock",
+    "plat_mutex_unlock",
+    "plat_mutex_lock_shared",
+    "plat_mutex_unlock_shared",
+]
+
+
+def score_hot_chunks(
+    gen_dir: Path,
+    mod_names: list[str],
+    top_chunks: int = 64,
+    max_order_syms: int = 4096,
+) -> tuple[set[Path], list[str]]:
+    """Score lifted C chunks by static direct call counts and build a linker symbol ordering list."""
+    def_owner: dict[bytes, Path] = {}
+    chunk_defs: dict[Path, list[bytes]] = {}
+    call_counts: Counter[bytes] = Counter()
+    is_word = _IS_WORD_BYTE
+
+    for mod in mod_names:
+        for src in chunk_files(gen_dir, mod):
+            if src.name.endswith("_table.c") or not src.is_file():
+                continue
+            blob = src.read_bytes()
+            defs = [
+                m.group(1)
+                for m in _HOT_DEF_RE.finditer(blob)
+                if m.start() == 0 or blob[m.start() - 1] == 10
+            ]
+            chunk_defs[src] = defs
+            for fn in defs:
+                def_owner[fn] = src
+            call_counts.update(
+                m.group(0)[:-3]
+                for m in _HOT_CALL_RE.finditer(blob)
+                if m.start() == 0 or not is_word[blob[m.start() - 1]]
+            )
+
+    scored = sorted(
+        ((sum(call_counts[fn] for fn in defs), src) for src, defs in chunk_defs.items()),
+        key=lambda item: (-item[0], item[1].as_posix()),
+    )
+    hot_chunks = {src for _score, src in scored[: max(0, top_chunks)]}
+
+    ordered_syms = list(_RUNTIME_HOT_SYMS)
+    if max_order_syms > 0:
+        ordered_syms.extend(
+            fn.decode("ascii")
+            for fn in sorted(def_owner.keys(), key=lambda fn: (-call_counts[fn], fn))[:max_order_syms]
+        )
+    return hot_chunks, ordered_syms
+
+
 def _python_with_fonttools(paths: KitPaths) -> str:
     """Pick a Python interpreter that can import fontTools (for button_icons.py)."""
     candidates = [str(paths.python_bin), sys.executable, shutil.which("python3") or "python3"]
@@ -433,11 +501,15 @@ def pretranslate_ps5_shaders(
         id_file = shader_src_dir / "totk_xlate.id"
         if id_file.is_file():
             xlate_id = id_file.read_text(encoding="utf-8").strip() or xlate_id
-            shutil.copy2(id_file, data_out / "totk_xlate.id")
+            dst_id = data_out / "totk_xlate.id"
+            if dst_id.resolve() != id_file.resolve():
+                shutil.copy2(id_file, dst_id)
         for fname in ("shader-prepared.bin", "shader-programs.bin", "shader-answers.bin"):
             src = shader_src_dir / fname
             if src.is_file():
-                shutil.copy2(src, data_out / fname)
+                dst = data_out / fname
+                if dst.resolve() != src.resolve():
+                    shutil.copy2(src, dst)
                 print(f"[ps5-totk] Bundled shader file: {fname} ({src.stat().st_size / (1024**2):.2f} MiB)")
 
     if (sc_out / "shader-cache.pack").is_file() and (data_out / "shader-prepared.bin").is_file():
@@ -555,7 +627,7 @@ def pretranslate_ps5_shaders(
     packed_src = stage_dir / "shader-cache" / "shader-cache.pack"
     if packed_src.is_file():
         shutil.copy2(packed_src, sc_out / "shader-cache.pack")
-    for fname in ("shader-prepared.bin", "totk_xlate.id"):
+    for fname in ("shader-prepared.bin", "shader-programs.bin", "shader-answers.bin", "totk_xlate.id"):
         src = stage_dir / fname
         if src.is_file():
             shutil.copy2(src, data_out / fname)
@@ -606,26 +678,30 @@ def write_ps5_totk_ini(
     data_out: Path,
     *,
     xlate_id: str = DEFAULT_PS5_XLATE_ID,
-    output_res: str = "2560x1440",
+    output_res: str = "1920x1080",
     render_scale: str = "game",
     lang: str = "es-419",
     pad_layout: str = "nintendo",
     prompts: str = "playstation",
-    replay_async: int = 0,
+    replay_async: int = 1,
     ps5_hz: int = 120,
-    frame_gen: str = "fsr3",
+    frame_gen: str = "off",
 ) -> Path:
     ini_path = data_out / "totk.ini"
-    fps_limit_line = "fps_limit = 30\n" if frame_gen == "fsr3" else "fps_limit = 60\n"
+    fps_limit_line = f"fps_limit = {int(ps5_hz)}\n" if frame_gen == "fsr3" else "fps_limit = 60\n"
     ini_path.write_text(
         "# PS5 Tears of the Kingdom configuration (/data/totk-ps5/totk.ini)\n"
         "TOTK_FULLSCREEN=1\n"
         "TOTK_ASSUME_FOCUS=1\n"
         "TOTK_ROMFS_VERIFY=off\n"
-        "TOTK_ASYNC_PREEMPT=0\n"
+        "TOTK_ASYNC_PREEMPT=2\n"
         "TOTK_ZERO_LOCALS=0\n"
         "TOTK_PCORE=0\n"
+        "TOTK_PS5_CCX=1\n"
         f"TOTK_PS5_HZ={int(ps5_hz)}\n"
+        "TOTK_SYNC_AHEAD=1\n"
+        "TOTK_SHADOW_DEFER=1\n"
+        "TOTK_BIND_INC=1\n"
         "TOTK_FG_OBJECTS=1\n"
         "TOTK_FG_TIMES=0\n"
         f"TOTK_XLATE_ID={xlate_id}\n"
@@ -655,8 +731,8 @@ def write_ps5_totk_ini(
         "[performance]\n"
         f"replay_async = {replay_async}\n"
         "replay_workers = 0\n"
-        "tex_released_mib = 128\n"
-        "tex_vram_pressure = 80\n"
+        "tex_released_mib = 256\n"
+        "tex_vram_pressure = 85\n"
         "vram_headroom = 0\n",
         encoding="utf-8",
     )
@@ -677,11 +753,11 @@ def build_full_ps5_game(
     build_prompts: bool = True,
     pretranslate_shaders: bool = False,
     mods: list[Path] | None = None,
-    output_res: str = "2560x1440",
+    output_res: str = "1920x1080",
     render_scale: str = "game",
     lang: str = "es-419",
     ps5_hz: int = 120,
-    frame_gen: str = "fsr3",
+    frame_gen: str = "off",
 ) -> Path:
     t0 = time.time()
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -721,6 +797,8 @@ def build_full_ps5_game(
 
     common_flags = target_flags + [
         "-march=znver2",
+        "-mcx16",
+        "-fno-omit-frame-pointer",
         "-fno-strict-aliasing",
         "-DRT_CPU_LEVEL=3",
         "-Dpreserve_most=noinline",
@@ -743,6 +821,7 @@ def build_full_ps5_game(
 
     gen_flags = common_flags + [
         "-O2",
+        "-ffp-contract=off",
         "-g0",
         "-Wno-everything",
         "-fvisibility=hidden",
@@ -751,12 +830,19 @@ def build_full_ps5_game(
         "-mllvm",
         "-capture-tracking-max-uses-to-explore=5000",
     ]
-    rt_flags = common_flags + ["-O2", "-Wno-unused-function", "-Wno-unused-variable"]
+    gen_hot_flags = [("-O3" if f == "-O2" else f) for f in gen_flags]
+    rt_flags = common_flags + ["-O3", "-DNDEBUG", "-Wno-unused-function", "-Wno-unused-variable"]
+
+    hot_chunks, hot_syms = score_hot_chunks(gen_dir, mod_names)
+    hot_order = work_dir / "hot_order.txt"
+    hot_order.write_text("\n".join(hot_syms) + "\n", encoding="utf-8")
+    print(f"[ps5-totk] Hot-chunk profile: {len(hot_chunks)} -O3 chunks, {len(hot_syms)} ordered symbols -> {hot_order.name}")
 
     ninja_lines = [
         "ninja_required_version = 1.10",
         f"cc = {cmd_quote(paths.clang.as_posix())}",
         f"genflags = {' '.join(cmd_quote(f) for f in gen_flags)}",
+        f"genhotflags = {' '.join(cmd_quote(f) for f in gen_hot_flags)}",
         f"rtflags = {' '.join(cmd_quote(f) for f in rt_flags)}",
         "",
         "pool gen",
@@ -767,6 +853,12 @@ def build_full_ps5_game(
         "  deps = gcc",
         "  depfile = $out.d",
         "  description = CC_GEN $out",
+        "",
+        "rule cc_gen_hot",
+        "  command = $cc $genhotflags -MD -MF $out.d -c $in -o $out",
+        "  deps = gcc",
+        "  depfile = $out.d",
+        "  description = CC_GEN_HOT $out",
         "",
         "rule cc_rt",
         "  command = $cc $rtflags -MD -MF $out.d -c $in -o $out",
@@ -784,8 +876,9 @@ def build_full_ps5_game(
             obj = obj_root / mod / f"{src.stem}.o"
             obj.parent.mkdir(parents=True, exist_ok=True)
             compiled_objs.append(obj)
+            rule = "cc_gen_hot" if src in hot_chunks else "cc_gen"
             ninja_lines += [
-                f"build {ninja_esc(obj)}: cc_gen {ninja_esc(src)}",
+                f"build {ninja_esc(obj)}: {rule} {ninja_esc(src)}",
                 "  pool = gen",
             ]
 
@@ -841,6 +934,8 @@ def build_full_ps5_game(
             str(local_map),
             "--exclude-libs=ALL",
             "--gc-sections",
+            f"--symbol-ordering-file={hot_order}",
+            "--no-warn-symbol-ordering",
             "-e",
             "_start",
             f"-Map={link_map}",

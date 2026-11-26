@@ -23,6 +23,11 @@ SECTIONS {
     .text 0 : ALIGN(CONSTANT(MAXPAGESIZE)) {
         QUAD(0xcccccccccccccccc)
         QUAD(0xcccccccccccccccc)
+        PROVIDE_HIDDEN(__totk_lifted_start = .);
+        *main/main_*.o(.text .text.*)
+        *subsdk*/subsdk*.o(.text .text.*)
+        *sdk/sdk_*.o(.text .text.*)
+        PROVIDE_HIDDEN(__totk_lifted_end = .);
         *(.text .text.*)
         *(.plt .plt.*)
     } : text

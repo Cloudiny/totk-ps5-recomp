@@ -105,7 +105,10 @@ def main() -> int:
 
     base_flags = [place(f) for f in info["target_flags"]] + [
         "-march=znver2",
-        "-O2",
+        "-O3",
+        "-DNDEBUG",
+        "-mcx16",
+        "-fno-omit-frame-pointer",
         "-fno-strict-aliasing",
         "-DRT_CPU_LEVEL=3",
         "-Dpreserve_most=noinline",
@@ -169,7 +172,7 @@ def main() -> int:
             "-mllvm",
             "-emulated-tls",
         ]
-        + [place(a) for a in lk["script"]]
+        + ["-T", str(PROJECT_ROOT / "ps5" / "ps5-totk.ld")]
         + [place(a) for a in lk["flags"]]
         + [
             "--version-script",

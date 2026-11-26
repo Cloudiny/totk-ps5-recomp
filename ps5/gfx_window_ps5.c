@@ -21,9 +21,11 @@
 extern PFN_vkVoidFunction vk_icdGetInstanceProcAddr(VkInstance instance, const char *pName);
 extern void rt_log(const char *fmt, ...);
 extern const char *cfg_get(const char *name) __attribute__((weak));
+extern void gfx_window_set_refresh(double hz) __attribute__((weak));
 
 static int g_width = 1920;
 static int g_height = 1080;
+static int g_mode_w = 0, g_mode_h = 0;
 static int g_opened = 0;
 
 static void want_display_size(int *out_w, int *out_h) {
@@ -126,8 +128,11 @@ VkSurfaceKHR wsys_surface(VkInstance inst) {
     if (pick < 0) pick = 0;
 
     const VkDisplayModeParametersKHR *mp = &modes[pick].parameters;
-    g_width = (int)mp->visibleRegion.width;
-    g_height = (int)mp->visibleRegion.height;
+    g_mode_w = g_width = (int)mp->visibleRegion.width;
+    g_mode_h = g_height = (int)mp->visibleRegion.height;
+    if (gfx_window_set_refresh && mp->refreshRate > 0) {
+        gfx_window_set_refresh((double)mp->refreshRate / 1000.0);
+    }
 
     VkDisplaySurfaceCreateInfoKHR ci;
     memset(&ci, 0, sizeof(ci));
@@ -161,6 +166,11 @@ int wsys_minimized(void) {
 }
 
 void wsys_resize(int w, int h) {
+    if (g_mode_w > 0 && g_mode_h > 0) {
+        g_width = g_mode_w;
+        g_height = g_mode_h;
+        return;
+    }
     if (w > 0 && h > 0) {
         g_width = w;
         g_height = h;

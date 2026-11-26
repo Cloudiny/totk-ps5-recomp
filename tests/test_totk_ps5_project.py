@@ -240,3 +240,102 @@ def test_ps5_radv_mesh_nwg_guard_rewrites_and_validates(tmp_path: Path) -> None:
         check=True,
     )
     subprocess.run([str(exe), str(out_spv)], check=True)
+
+
+def test_vk_trampolines_cached_dispatch() -> None:
+    import re
+
+    src = (PROJECT_ROOT / "ps5" / "vk_ps5_trampolines.c").read_text(encoding="utf-8")
+    assert "pfn_vkCmdDrawIndexed" in src
+    assert "ps5_vk_load_device_procs" in src
+    assert "ps5_vk_load_instance_procs" in src
+
+    m = re.search(
+        r"VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndexed\([^)]*\)\s*\{(.*?)\n\}",
+        src,
+        re.DOTALL,
+    )
+    assert m is not None, "vkCmdDrawIndexed trampoline not found"
+    body = m.group(1)
+    assert "pfn_vkCmdDrawIndexed" in body
+    assert "vk_icdGetInstanceProcAddr" not in body
+
+
+def test_ps5_platform_optimizations_and_gpu_rw() -> None:
+    plat = (PROJECT_ROOT / "ps5" / "platform_ps5.c").read_text(encoding="utf-8")
+    plat_h = (PROJECT_ROOT / "ps5" / "plat_ps5.h").read_text(encoding="utf-8")
+    plat_mem = (PROJECT_ROOT / "ps5" / "plat_ps5_mem.c").read_text(encoding="utf-8")
+
+    assert "MESA_SHADER_CACHE_MAX_SIZE" in plat
+    assert "UMTX_OP_WAIT_UINT_PRIVATE" in plat
+    assert "UMTX_OP_WAKE_PRIVATE" in plat
+    assert "PS5_PROT_GPU_RW" in plat_h and "PS5_PROT_GPU_RW" in plat and "PS5_PROT_GPU_RW" in plat_mem
+    assert "sceKernelDirectMemoryQuery" in plat
+    assert "ps5_probe_cpu_topology" in plat
+    assert "g_ww_in_handler" in plat
+    assert "g_wd_now_calls" not in plat
+    assert "g_wd_ctr_calls" not in plat
+    assert "g_wd_in_mutex_lock" not in plat
+
+
+def test_ps5_lifted_text_separated_from_host_code() -> None:
+    elf = PROJECT_ROOT / "build" / "game_v143" / "totk_ps5_pie.elf"
+    if not elf.is_file():
+        return
+    nm = KIT_ROOT / "tools" / "bin" / "llvm-nm"
+    out = subprocess.run([str(nm), "-n", str(elf)], capture_output=True, text=True, check=True).stdout
+
+    lo = None
+    hi = 0
+    hosts = {"kern_ap_stub", "kern_checkpoint", "rt_svc", "rt_dispatch", "rt_call", "plugin_init"}
+    host_addrs: dict[str, int] = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) < 3 or parts[0] == "U":
+            continue
+        addr = int(parts[0], 16)
+        sym = parts[2]
+        if sym.startswith("f_70") and len(sym) == 12:
+            if lo is None or addr < lo:
+                lo = addr
+            if addr > hi:
+                hi = addr
+        if sym in hosts:
+            host_addrs[sym] = addr
+
+    assert lo is not None and hi > lo
+    for name in ("kern_ap_stub", "kern_checkpoint", "rt_svc", "rt_dispatch", "rt_call"):
+        assert name in host_addrs, f"Missing expected host symbol {name}"
+        assert not (lo <= host_addrs[name] <= hi), f"Host symbol {name} ({host_addrs[name]:#x}) inside lifted [{lo:#x}..{hi:#x}]"
+    if "plugin_init" in host_addrs:
+        assert not (lo <= host_addrs["plugin_init"] <= hi), "plugin_init must not sit inside lifted range"
+
+
+def test_ps5_hot_chunks_and_totk_ini_defaults() -> None:
+    import sys
+
+    sys.path.insert(0, str(PROJECT_ROOT))
+    from builder.pipeline import score_hot_chunks
+
+    gen_v143 = PROJECT_ROOT / "build" / "generated" / "v143"
+    if gen_v143.is_dir():
+        hot_chunks, ordered_syms = score_hot_chunks(gen_v143, ["main", "subsdk0", "sdk"])
+        assert len(hot_chunks) == 64
+        assert len(ordered_syms) > 4000
+        assert ordered_syms[0] == "vk_exec_record"
+
+    ini = (OUT_DATA / "totk.ini").read_text(encoding="utf-8")
+    for expected in (
+        "replay_async = 1",
+        "frame_gen = off",
+        "TOTK_SYNC_AHEAD=1",
+        "TOTK_BIND_INC=1",
+        "TOTK_ASYNC_PREEMPT=2",
+        "TOTK_PS5_CCX=1",
+    ):
+        assert expected in ini, f"Missing '{expected}' in out/data_totk_ps5/totk.ini"
+
+    probe_json = (PROJECT_ROOT / "docs" / "compile_probe_ps5.json").read_text(encoding="utf-8")
+    assert "/home/" not in probe_json
+    probe_data = json.loads(probe_json)
+    assert probe_data["passed"] == 131 and probe_data["total"] == 136

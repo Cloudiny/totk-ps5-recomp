@@ -10,10 +10,13 @@
 #include <ps5platform/shm.h>
 #include <ps5platform/heap.h>
 
+#include <cpuid.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <immintrin.h>
 #include <pthread.h>
+#include <pthread_np.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -24,6 +27,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/umtx.h>
 #include <time.h>
 #include <ucontext.h>
 #include <unistd.h>
@@ -31,32 +35,30 @@
 /* Direct static Mesa RADV PS5 Vulkan ICD entry point */
 extern void *vk_icdGetInstanceProcAddr(void *instance, const char *name);
 extern int32_t sceKernelUsleep(uint32_t microseconds);
+extern int32_t sceKernelDirectMemoryQuery(int64_t offset, int flags, void *info, size_t size);
 extern void ps5_arc4random_buf(void *buf, size_t len);
 extern int32_t sceSystemServiceHideSplashScreen(void);
 extern int32_t sceUserServiceInitialize(const void *params);
 extern int32_t sceUserServiceGetInitialUser(int32_t *user_id);
 extern int32_t sceUserServiceGetUserName(int32_t user_id, char *user_name, size_t size);
+extern int32_t scePthreadGetprio(pthread_t thread, int *prio);
 extern int32_t scePthreadSetprio(pthread_t thread, int prio);
 extern void rt_log(const char *fmt, ...);
+extern const char *cfg_get(const char *name) __attribute__((weak));
 extern void *kern_cpu(void) __attribute__((weak));
 extern int kern_thread_state(uint32_t handle) __attribute__((weak));
 extern uint64_t gfx_counters __attribute__((weak)); /* offset 0 of GfxStats is uint64_t frames */
 
+static inline const char *ps5_cfg_or_env(const char *name) {
+    const char *v = cfg_get ? cfg_get(name) : NULL;
+    return (v && *v) ? v : getenv(name);
+}
+
 /* ---- Live PS5 diagnostic counters, thread sampler & watchdog ---- */
 static volatile uint64_t g_wd_fibers = 0;
-static volatile uint64_t g_wd_cond_waits = 0;
-static volatile uint64_t g_wd_cond_signals = 0;
 static volatile uint64_t g_wd_commits = 0;
 static volatile uint64_t g_wd_ww_faults = 0;
 static volatile uint64_t g_wd_threads_created = 0;
-static volatile uint64_t g_wd_yields = 0;
-static volatile uint64_t g_wd_sleeps = 0;
-static volatile uint64_t g_wd_last_sleep_ns = 0;
-static volatile uint64_t g_wd_now_calls = 0;
-static volatile uint64_t g_wd_ctr_calls = 0;
-static volatile int32_t g_wd_in_cond_wait = 0;
-static volatile int32_t g_wd_in_mutex_lock = 0;
-static volatile int32_t g_wd_in_sleep = 0;
 static volatile int32_t g_wd_started = 0;
 
 typedef struct Ps5TrackedThr {
@@ -161,13 +163,13 @@ static void ps5_wd_sample_all(int sec) {
 
 static void *ps5_watchdog_thread(void *arg) {
     (void)arg;
-    const char *verbose = getenv("TOTK_PS5_WATCHDOG");
-    int log_boot = (verbose && strcmp(verbose, "1") == 0);
     uint64_t last_fr = 0;
     int stuck_ticks = 0;
     int dumped_this_stall = 0;
     for (int tick = 1;; ++tick) {
         sceKernelUsleep(2000000u); /* 2s poll -> 0.000% CPU overhead */
+        const char *verbose = ps5_cfg_or_env("TOTK_PS5_WATCHDOG");
+        int log_boot = (verbose && strcmp(verbose, "1") == 0);
         if (log_boot && tick <= 15 && (tick % 3) == 0) {
             struct ps5_memory_stats s;
             unsigned long long free_mb = 0, flex_mb = 0;
@@ -217,7 +219,7 @@ static void *ps5_watchdog_thread(void *arg) {
 }
 
 static void ps5_start_watchdog(void) {
-    const char *wd = getenv("TOTK_PS5_WATCHDOG");
+    const char *wd = ps5_cfg_or_env("TOTK_PS5_WATCHDOG");
     if (wd && strcmp(wd, "0") == 0) return;
     int32_t zero = 0;
     if (__atomic_compare_exchange_n(&g_wd_started, &zero, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
@@ -294,26 +296,172 @@ static void ps5_init_user_profile(void) {
     totk_ps5_klogf("[totk-ps5] user-save: active PS5 user '%s' (0x%08x) -> %s\n", uname, (unsigned)uid, user_dir);
 }
 
-/* ---- Startup / klog hook ---- */
+/* ---- TSC Clock Scaling & Startup / klog hook ---- */
+static PlatScale g_tsc_scale;
+static uint64_t g_tsc_hz = 0;
+static volatile int32_t g_tsc_ready = 0;
+
+static inline void ps5_init_tsc_once(void) {
+    if (__builtin_expect(__atomic_load_n(&g_tsc_ready, __ATOMIC_ACQUIRE) == 2, 1)) return;
+    int32_t expected = 0;
+    if (__atomic_compare_exchange_n(&g_tsc_ready, &expected, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+        uint64_t hz = sceKernelGetTscFrequency();
+        if (!hz) hz = 1000000000ull;
+        g_tsc_hz = hz;
+        g_tsc_scale = plat_scale(1000000000ull, hz);
+        __atomic_store_n(&g_tsc_ready, 2, __ATOMIC_RELEASE);
+    } else {
+        while (__atomic_load_n(&g_tsc_ready, __ATOMIC_ACQUIRE) != 2) {
+            _mm_pause();
+        }
+    }
+}
+
+/* ---- 2-CCX / 13-SMT Hardware CPUID Topology ---- */
+typedef struct Ps5PhysCore {
+    int l3;
+    unsigned core;
+    uint64_t smt_mask;
+} Ps5PhysCore;
+
+static Ps5PhysCore g_phys_cores[64];
+static int g_phys_core_cnt = 0;
+static uint64_t g_cpu_all = 0;
+static uint64_t g_cpu_first = 0;
+static uint32_t g_cpu_usable_cnt = 0;
+static uint64_t g_l3_mask[2] = { 0, 0 };
+static int g_base_prio = 700;
+static volatile int32_t g_topo_state = 0;
+
+static void ps5_probe_cpu_topology(void) {
+    if (__builtin_expect(__atomic_load_n(&g_topo_state, __ATOMIC_ACQUIRE) == 2, 1)) return;
+    int32_t expected = 0;
+    if (!__atomic_compare_exchange_n(&g_topo_state, &expected, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+        while (__atomic_load_n(&g_topo_state, __ATOMIC_ACQUIRE) != 2) {
+            _mm_pause();
+        }
+        return;
+    }
+
+    int prio = 0;
+    if (scePthreadGetprio(pthread_self(), &prio) == 0 && prio > 0) {
+        g_base_prio = prio;
+    } else {
+        g_base_prio = 700;
+    }
+
+    uint64_t was = 0;
+    if (scePthreadGetaffinity(pthread_self(), &was) != 0 || !was) {
+        was = 0x1FFFull;
+    }
+
+    g_cpu_all = was;
+    g_cpu_usable_cnt = (uint32_t)__builtin_popcountll(was);
+    g_cpu_first = 0;
+    g_phys_core_cnt = 0;
+    g_l3_mask[0] = 0;
+    g_l3_mask[1] = 0;
+
+    int first_l3 = -1;
+    for (int i = 0; i < 64; ++i) {
+        if (!((was >> i) & 1ull)) continue;
+        if (scePthreadSetaffinity(pthread_self(), 1ull << i) != 0) continue;
+        sched_yield();
+
+        unsigned a = 0, b = 0, c = 0, d = 0, share = 0;
+        __cpuid_count(0x8000001e, 0, a, b, c, d);
+        const unsigned apic = a;
+        const unsigned core = b & 0xffu;
+
+        __cpuid_count(0x8000001d, 3, a, b, c, d);
+        if ((a & 0x1fu) && ((a >> 5) & 7u) == 3u) {
+            share = ((a >> 14) & 0xfffu) + 1u;
+        }
+        int l3 = (int)apic;
+        if (share > 0u) {
+            for (unsigned s = share - 1u; s > 0u; s >>= 1) l3 >>= 1;
+        }
+        if (first_l3 < 0) first_l3 = l3;
+        if (share) g_l3_mask[l3 != first_l3] |= (1ull << i);
+
+        int found = -1;
+        for (int k = 0; k < g_phys_core_cnt; ++k) {
+            if (g_phys_cores[k].l3 == l3 && g_phys_cores[k].core == core) {
+                found = k;
+                break;
+            }
+        }
+        if (found >= 0) {
+            g_phys_cores[found].smt_mask |= (1ull << i);
+        } else if (g_phys_core_cnt < 64) {
+            g_phys_cores[g_phys_core_cnt].l3 = l3;
+            g_phys_cores[g_phys_core_cnt].core = core;
+            g_phys_cores[g_phys_core_cnt].smt_mask = (1ull << i);
+            g_phys_core_cnt++;
+            g_cpu_first |= (1ull << i);
+        }
+    }
+    scePthreadSetaffinity(pthread_self(), was);
+
+    if (g_phys_core_cnt == 0) {
+        for (int i = 0; i < 64; ++i) {
+            if (!((was >> i) & 1ull)) continue;
+            g_phys_cores[g_phys_core_cnt].l3 = 0;
+            g_phys_cores[g_phys_core_cnt].core = (unsigned)i;
+            g_phys_cores[g_phys_core_cnt].smt_mask = (1ull << i);
+            g_phys_core_cnt++;
+            g_cpu_first |= (1ull << i);
+        }
+    }
+    if (g_l3_mask[0] == 0 && g_l3_mask[1] == 0) {
+        g_l3_mask[0] = was;
+    }
+
+    __atomic_store_n(&g_topo_state, 2, __ATOMIC_RELEASE);
+}
+
+static uint64_t ps5_nth_core_pair_mask(uint64_t ccx_mask, int idx) {
+    if (!ccx_mask) return 0;
+    int seen = 0;
+    for (int k = 0; k < g_phys_core_cnt; ++k) {
+        uint64_t m = g_phys_cores[k].smt_mask & ccx_mask;
+        if (m) {
+            if (seen == idx) return m;
+            seen++;
+        }
+    }
+    return ccx_mask;
+}
+
 static uint64_t g_start_ns = 0;
+static volatile int32_t g_init_state = 0;
 
 __attribute__((constructor)) static void ps5_early_ctor(void) {
     sceKernelDebugOutText(0, "[totk-ps5] BOOT: eboot constructor entered\n");
     ps5_klog_capture_stderr("[totk-ps5] ");
+    setenv("MESA_SHADER_CACHE_MAX_SIZE", "10G", 0);
+    ps5_init_tsc_once();
+    ps5_probe_cpu_topology();
     ps5_init_user_profile();
 }
 
 static void ps5_ensure_init(void) {
-    if (__atomic_load_n(&g_start_ns, __ATOMIC_ACQUIRE) != 0) return;
-    ps5_klog_capture_stderr("[totk-ps5] ");
-    sceSystemServiceHideSplashScreen();
-    sceKernelDebugOutText(0, "[totk-ps5] BOOT: splash hidden, platform init OK\n");
-    ps5_start_watchdog();
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    uint64_t now = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
-    uint64_t zero = 0;
-    __atomic_compare_exchange_n(&g_start_ns, &zero, now ? now : 1, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED);
+    if (__builtin_expect(__atomic_load_n(&g_init_state, __ATOMIC_ACQUIRE) == 2, 1)) return;
+    int32_t expected = 0;
+    if (__atomic_compare_exchange_n(&g_init_state, &expected, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+        ps5_klog_capture_stderr("[totk-ps5] ");
+        sceSystemServiceHideSplashScreen();
+        sceKernelDebugOutText(0, "[totk-ps5] BOOT: splash hidden, platform init OK\n");
+        ps5_probe_cpu_topology();
+        ps5_start_watchdog();
+        uint64_t now = plat_now_ns();
+        __atomic_store_n(&g_start_ns, now ? now : 1, __ATOMIC_RELEASE);
+        __atomic_store_n(&g_init_state, 2, __ATOMIC_RELEASE);
+    } else {
+        while (__atomic_load_n(&g_init_state, __ATOMIC_ACQUIRE) != 2) {
+            _mm_pause();
+        }
+    }
 }
 
 /* ---- Threads ---- */
@@ -363,7 +511,6 @@ static void *thread_trampoline(void *p) {
 }
 
 PlatThread *plat_thread_new_ex(PlatThreadFn fn, void *arg, const char *name, size_t stack) {
-    (void)name;
     ps5_ensure_init();
     PlatThread *t = (PlatThread *)calloc(1, sizeof(*t));
     if (!t) return NULL;
@@ -398,6 +545,27 @@ PlatThread *plat_thread_new_ex(PlatThreadFn fn, void *arg, const char *name, siz
         pthread_cond_destroy(&t->cv);
         free(t);
         return NULL;
+    }
+    if (name && name[0]) {
+        pthread_set_name_np(t->pt, name);
+    }
+    const char *ccx_env = ps5_cfg_or_env("TOTK_PS5_CCX");
+    if (!(ccx_env && strcmp(ccx_env, "0") == 0) && name) {
+        uint64_t pin_mask = 0;
+        if (strncmp(name, "guest", 5) == 0 || strncmp(name, "core", 4) == 0) {
+            pin_mask = g_l3_mask[0];
+        } else if (strcmp(name, "vk replay") == 0) {
+            pin_mask = ps5_nth_core_pair_mask(g_l3_mask[1], 0);
+        } else if (strcmp(name, "vk recorder") == 0) {
+            pin_mask = ps5_nth_core_pair_mask(g_l3_mask[1], 1);
+        } else if (strcmp(name, "vk present") == 0 ||
+                   strcmp(name, "vk completion") == 0 ||
+                   strcmp(name, "ps5-audio") == 0) {
+            pin_mask = g_l3_mask[1];
+        }
+        if (pin_mask) {
+            scePthreadSetaffinity(t->pt, pin_mask);
+        }
     }
     __atomic_fetch_add(&g_wd_threads_created, 1, __ATOMIC_RELAXED);
     int idx = __atomic_fetch_add(&g_wd_thr_n, 1, __ATOMIC_ACQ_REL);
@@ -473,14 +641,23 @@ uint64_t plat_thread_affinity(PlatThread *t, uint64_t mask) {
     return prev;
 }
 
-uint32_t plat_cpu_count(void) { return 8; }
-uint32_t plat_cpu_usable(void) { return 7; }
+uint32_t plat_cpu_count(void) {
+    ps5_ensure_init();
+    return g_cpu_usable_cnt ? g_cpu_usable_cnt : 13u;
+}
+
+uint32_t plat_cpu_usable(void) {
+    ps5_ensure_init();
+    return g_cpu_usable_cnt ? g_cpu_usable_cnt : 13u;
+}
+
 uint64_t plat_thread_cpu_ns(uint32_t tid) { (void)tid; return 0; }
 
 int plat_cpu_cores(uint64_t *all, uint64_t *first) {
-    if (all) *all = 0x7Full;
-    if (first) *first = 0x7Full;
-    return 7;
+    ps5_ensure_init();
+    if (all) *all = g_cpu_all;
+    if (first) *first = g_cpu_first;
+    return g_phys_core_cnt;
 }
 
 int plat_process_affinity(uint64_t mask) {
@@ -488,11 +665,45 @@ int plat_process_affinity(uint64_t mask) {
     return 1;
 }
 
-void plat_thread_priority(int prio) { (void)prio; }
-void plat_thread_set_priority(PlatThread *t, int prio) { (void)t; (void)prio; }
-int plat_thread_priority_get(void) { return 0; }
+static int ps5_map_plat_prio(int prio) {
+    ps5_probe_cpu_topology();
+    int offset = 0;
+    if (prio <= PLAT_PRIO_IDLE) offset = 60;
+    else if (prio <= PLAT_PRIO_LOWEST) offset = 30;
+    else if (prio == PLAT_PRIO_BELOW_NORMAL) offset = 15;
+    else if (prio == PLAT_PRIO_NORMAL) offset = 0;
+    else if (prio == PLAT_PRIO_ABOVE_NORMAL) offset = -15;
+    else if (prio == PLAT_PRIO_HIGHEST) offset = -30;
+    else offset = -60;
+    int p = g_base_prio + offset;
+    if (p < 256) p = 256;
+    if (p > 767) p = 767;
+    return p;
+}
+
+void plat_thread_priority(int prio) {
+    scePthreadSetprio(pthread_self(), ps5_map_plat_prio(prio));
+}
+
+void plat_thread_set_priority(PlatThread *t, int prio) {
+    scePthreadSetprio(t ? t->pt : pthread_self(), ps5_map_plat_prio(prio));
+}
+
+int plat_thread_priority_get(void) {
+    ps5_probe_cpu_topology();
+    int cur = g_base_prio;
+    if (scePthreadGetprio(pthread_self(), &cur) != 0) return PLAT_PRIO_NORMAL;
+    int diff = cur - g_base_prio;
+    if (diff >= 50) return PLAT_PRIO_IDLE;
+    if (diff >= 25) return PLAT_PRIO_LOWEST;
+    if (diff >= 10) return PLAT_PRIO_BELOW_NORMAL;
+    if (diff > -10) return PLAT_PRIO_NORMAL;
+    if (diff > -25) return PLAT_PRIO_ABOVE_NORMAL;
+    if (diff > -50) return PLAT_PRIO_HIGHEST;
+    return PLAT_PRIO_TIME_CRITICAL;
+}
+
 void plat_yield(void) {
-    __atomic_fetch_add(&g_wd_yields, 1, __ATOMIC_RELAXED);
     sched_yield();
 }
 
@@ -632,20 +843,15 @@ void plat_fiber_free(PlatFiber *f) {
 
 /* ---- Clocks & sleep ---- */
 uint64_t plat_now_ns(void) {
-    __atomic_fetch_add(&g_wd_now_calls, 1, __ATOMIC_RELAXED);
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+    ps5_init_tsc_once();
+    return plat_scaled(g_tsc_scale, sceKernelReadTsc());
 }
 
-uint64_t plat_counter(void) {
-    __atomic_fetch_add(&g_wd_ctr_calls, 1, __ATOMIC_RELAXED);
-    return sceKernelReadTsc();
-}
+uint64_t plat_counter(void) { return sceKernelReadTsc(); }
 
 uint64_t plat_counter_hz(void) {
-    uint64_t hz = sceKernelGetTscFrequency();
-    return hz ? hz : 1000000000ull;
+    ps5_init_tsc_once();
+    return g_tsc_hz;
 }
 
 void plat_timer_1ms(void) {}
@@ -659,11 +865,8 @@ int plat_thread_perf_core(void) {
     return 0;
 }
 
-void plat_sleep_ns(uint64_t ns) {
+static void ps5_usleep_ns(uint64_t ns) {
     if (ns == 0) return;
-    __atomic_fetch_add(&g_wd_sleeps, 1, __ATOMIC_RELAXED);
-    __atomic_store_n(&g_wd_last_sleep_ns, ns, __ATOMIC_RELAXED);
-    __atomic_fetch_add(&g_wd_in_sleep, 1, __ATOMIC_RELAXED);
     if (ns > 60000000000ull) ns = 60000000000ull; /* clamp huge sleeps to 60s */
     uint64_t us = (ns + 999ull) / 1000ull;
     while (us > 1000000ull) {
@@ -671,179 +874,163 @@ void plat_sleep_ns(uint64_t ns) {
         us -= 1000000ull;
     }
     if (us > 0) sceKernelUsleep((uint32_t)us);
-    __atomic_fetch_sub(&g_wd_in_sleep, 1, __ATOMIC_RELAXED);
+}
+
+void plat_sleep_ns(uint64_t ns) {
+    if (ns == 0) return;
+    if (ns > 60000000000ull) ns = 60000000000ull;
+    uint64_t deadline = plat_now_ns() + ns;
+    for (;;) {
+        uint64_t now = plat_now_ns();
+        if (now >= deadline) return;
+        uint64_t rem = deadline - now;
+        if (rem <= 250000ull) break;
+        uint64_t us = (rem - 150000ull) / 1000ull;
+        if (us > 1000000ull) us = 1000000ull;
+        if (us > 0) sceKernelUsleep((uint32_t)us);
+    }
+    while (plat_now_ns() < deadline) {
+        _mm_pause();
+    }
 }
 
 void plat_wait_ns(uint64_t ns) {
-    plat_sleep_ns(ns);
+    ps5_usleep_ns(ns);
 }
 
 void plat_sleep_ms(uint32_t ms) {
-    plat_sleep_ns((uint64_t)ms * 1000000ull);
+    ps5_usleep_ns((uint64_t)ms * 1000000ull);
 }
 
-/* ---- Locks & Condition Variables ---- */
-typedef struct Ps5RwLock {
-    pthread_mutex_t mu;
-    pthread_cond_t cv;
-    int readers;
-    int writer;
-    int waiting_writers;
-} Ps5RwLock;
+/* ---- Locks & Condition Variables (inline single-word _umtx_op SRW & seq condvar) ---- */
+_Static_assert(sizeof(PlatMutex) >= sizeof(uint32_t), "PlatMutex size");
+_Static_assert(sizeof(PlatCond) >= sizeof(uint32_t), "PlatCond size");
 
-static Ps5RwLock *rw_get(PlatMutex *m) {
-    Ps5RwLock *rw = (Ps5RwLock *)__atomic_load_n(&m->p, __ATOMIC_ACQUIRE);
-    if (rw) return rw;
-    Ps5RwLock *n = (Ps5RwLock *)calloc(1, sizeof(*n));
-    pthread_mutex_init(&n->mu, NULL);
-    pthread_cond_init(&n->cv, NULL);
-    void *expected = NULL;
-    if (!__atomic_compare_exchange_n(&m->p, &expected, n, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-        pthread_mutex_destroy(&n->mu);
-        pthread_cond_destroy(&n->cv);
-        free(n);
-        return (Ps5RwLock *)expected;
+typedef volatile uint32_t __attribute__((__may_alias__)) ps5_u32_v;
+#define MTX_W(m) ((ps5_u32_v *)&(m)->p)
+#define CV_W(c) ((ps5_u32_v *)&(c)->p)
+
+#define PS5_SRW_W 0x80000000u
+#define PS5_SRW_S 0x40000000u
+#define PS5_SRW_R 0x3fffffffu
+#define PS5_SRW_SPINS 64
+
+static inline void ps5_srw_sleep(ps5_u32_v *w, uint32_t seen) {
+    if (!(seen & PS5_SRW_S) &&
+        !__atomic_compare_exchange_n(w, &seen, seen | PS5_SRW_S, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+        return;
     }
-    return n;
+    _umtx_op((void *)(uintptr_t)w, UMTX_OP_WAIT_UINT_PRIVATE, seen | PS5_SRW_S, NULL, NULL);
 }
 
-static pthread_cond_t *cv_get(PlatCond *c) {
-    pthread_cond_t *cv = (pthread_cond_t *)__atomic_load_n(&c->p, __ATOMIC_ACQUIRE);
-    if (cv) return cv;
-    pthread_cond_t *n = (pthread_cond_t *)calloc(1, sizeof(*n));
-    pthread_cond_init(n, NULL);
-    void *expected = NULL;
-    if (!__atomic_compare_exchange_n(&c->p, &expected, n, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-        pthread_cond_destroy(n);
-        free(n);
-        return (pthread_cond_t *)expected;
+static inline void ps5_srw_wake(ps5_u32_v *w) {
+    __atomic_fetch_and(w, ~PS5_SRW_S, __ATOMIC_RELAXED);
+    _umtx_op((void *)(uintptr_t)w, UMTX_OP_WAKE_PRIVATE, 0x7fffffff, NULL, NULL);
+}
+
+static inline int hos_srw_try_lock(ps5_u32_v *w) {
+    uint32_t s = __atomic_load_n(w, __ATOMIC_RELAXED);
+    while (!(s & (PS5_SRW_W | PS5_SRW_R))) {
+        if (__atomic_compare_exchange_n(w, &s, s | PS5_SRW_W, 1, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return 1;
     }
-    return n;
+    return 0;
 }
 
-void plat_mutex_init(PlatMutex *m) { m->p = NULL; (void)rw_get(m); }
-
-void plat_mutex_lock(PlatMutex *m) {
-    Ps5RwLock *rw = rw_get(m);
-    __atomic_fetch_add(&g_wd_in_mutex_lock, 1, __ATOMIC_RELAXED);
-    pthread_mutex_lock(&rw->mu);
-    rw->waiting_writers++;
-    while (rw->writer || rw->readers > 0) {
-        pthread_cond_wait(&rw->cv, &rw->mu);
+static inline void hos_srw_lock(ps5_u32_v *w) {
+    for (int spin = 0;; ++spin) {
+        uint32_t s = __atomic_load_n(w, __ATOMIC_RELAXED);
+        if (!(s & (PS5_SRW_W | PS5_SRW_R))) {
+            if (__atomic_compare_exchange_n(w, &s, s | PS5_SRW_W, 1, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return;
+            continue;
+        }
+        if (spin < PS5_SRW_SPINS) _mm_pause();
+        else ps5_srw_sleep(w, s);
     }
-    rw->waiting_writers--;
-    rw->writer = 1;
-    pthread_mutex_unlock(&rw->mu);
-    __atomic_fetch_sub(&g_wd_in_mutex_lock, 1, __ATOMIC_RELAXED);
 }
 
-int plat_mutex_trylock(PlatMutex *m) {
-    Ps5RwLock *rw = rw_get(m);
-    pthread_mutex_lock(&rw->mu);
-    int ok = 0;
-    if (!rw->writer && rw->readers == 0) {
-        rw->writer = 1;
-        ok = 1;
+static inline void hos_srw_unlock(ps5_u32_v *w) {
+    if (__atomic_fetch_and(w, ~PS5_SRW_W, __ATOMIC_RELEASE) & PS5_SRW_S) {
+        ps5_srw_wake(w);
     }
-    pthread_mutex_unlock(&rw->mu);
-    return ok;
 }
 
-void plat_mutex_unlock(PlatMutex *m) {
-    Ps5RwLock *rw = rw_get(m);
-    pthread_mutex_lock(&rw->mu);
-    rw->writer = 0;
-    pthread_cond_broadcast(&rw->cv);
-    pthread_mutex_unlock(&rw->mu);
-}
-
-void plat_mutex_lock_shared(PlatMutex *m) {
-    Ps5RwLock *rw = rw_get(m);
-    pthread_mutex_lock(&rw->mu);
-    while (rw->writer || rw->waiting_writers > 0) {
-        pthread_cond_wait(&rw->cv, &rw->mu);
+static inline int hos_srw_try_lock_shared(ps5_u32_v *w) {
+    uint32_t s = __atomic_load_n(w, __ATOMIC_RELAXED);
+    while (!(s & (PS5_SRW_W | PS5_SRW_S))) {
+        if (__atomic_compare_exchange_n(w, &s, s + 1u, 1, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return 1;
     }
-    rw->readers++;
-    pthread_mutex_unlock(&rw->mu);
+    return 0;
 }
 
-int plat_mutex_trylock_shared(PlatMutex *m) {
-    Ps5RwLock *rw = rw_get(m);
-    pthread_mutex_lock(&rw->mu);
-    int ok = 0;
-    if (!rw->writer && rw->waiting_writers == 0) {
-        rw->readers++;
-        ok = 1;
+static inline void hos_srw_lock_shared(ps5_u32_v *w) {
+    for (int spin = 0;; ++spin) {
+        uint32_t s = __atomic_load_n(w, __ATOMIC_RELAXED);
+        if (!(s & (PS5_SRW_W | PS5_SRW_S))) {
+            if (__atomic_compare_exchange_n(w, &s, s + 1u, 1, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return;
+            continue;
+        }
+        if (spin < PS5_SRW_SPINS) _mm_pause();
+        else ps5_srw_sleep(w, s);
     }
-    pthread_mutex_unlock(&rw->mu);
-    return ok;
 }
 
-void plat_mutex_unlock_shared(PlatMutex *m) {
-    Ps5RwLock *rw = rw_get(m);
-    pthread_mutex_lock(&rw->mu);
-    rw->readers--;
-    if (rw->readers == 0) pthread_cond_broadcast(&rw->cv);
-    pthread_mutex_unlock(&rw->mu);
+static inline void hos_srw_unlock_shared(ps5_u32_v *w) {
+    uint32_t s = __atomic_sub_fetch(w, 1u, __ATOMIC_RELEASE);
+    if (!(s & PS5_SRW_R) && (s & PS5_SRW_S)) {
+        ps5_srw_wake(w);
+    }
 }
 
-void plat_cond_init(PlatCond *c) { c->p = NULL; (void)cv_get(c); }
+void plat_mutex_init(PlatMutex *m) {
+    m->p = NULL;
+    __atomic_store_n(MTX_W(m), 0u, __ATOMIC_RELAXED);
+}
+
+void plat_mutex_lock(PlatMutex *m) { hos_srw_lock(MTX_W(m)); }
+int plat_mutex_trylock(PlatMutex *m) { return hos_srw_try_lock(MTX_W(m)); }
+void plat_mutex_unlock(PlatMutex *m) { hos_srw_unlock(MTX_W(m)); }
+void plat_mutex_lock_shared(PlatMutex *m) { hos_srw_lock_shared(MTX_W(m)); }
+int plat_mutex_trylock_shared(PlatMutex *m) { return hos_srw_try_lock_shared(MTX_W(m)); }
+void plat_mutex_unlock_shared(PlatMutex *m) { hos_srw_unlock_shared(MTX_W(m)); }
+
+void plat_cond_init(PlatCond *c) {
+    c->p = NULL;
+    __atomic_store_n(CV_W(c), 0u, __ATOMIC_RELAXED);
+}
 
 void plat_cond_wait(PlatCond *c, PlatMutex *m) {
-    Ps5RwLock *rw = rw_get(m);
-    pthread_cond_t *cv = cv_get(c);
-    __atomic_fetch_add(&g_wd_cond_waits, 1, __ATOMIC_RELAXED);
-    __atomic_fetch_add(&g_wd_in_cond_wait, 1, __ATOMIC_RELAXED);
-    pthread_mutex_lock(&rw->mu);
-    rw->writer = 0;
-    pthread_cond_broadcast(&rw->cv);
-    pthread_cond_wait(cv, &rw->mu);
-    rw->waiting_writers++;
-    while (rw->writer || rw->readers > 0) {
-        pthread_cond_wait(&rw->cv, &rw->mu);
-    }
-    rw->waiting_writers--;
-    rw->writer = 1;
-    pthread_mutex_unlock(&rw->mu);
-    __atomic_fetch_sub(&g_wd_in_cond_wait, 1, __ATOMIC_RELAXED);
+    uint32_t seq = __atomic_load_n(CV_W(c), __ATOMIC_RELAXED);
+    plat_mutex_unlock(m);
+    _umtx_op((void *)(uintptr_t)CV_W(c), UMTX_OP_WAIT_UINT_PRIVATE, seq, NULL, NULL);
+    plat_mutex_lock(m);
 }
 
 int plat_cond_wait_ns(PlatCond *c, PlatMutex *m, uint64_t ns) {
-    Ps5RwLock *rw = rw_get(m);
-    pthread_cond_t *cv = cv_get(c);
-    /* Clamp huge/infinite timeouts (e.g. INT64_MAX) so tv_sec never overflows */
+    if (ns == 0) {
+        plat_mutex_unlock(m);
+        plat_mutex_lock(m);
+        return 0;
+    }
     const uint64_t max_ns = 31536000ull * 1000000000ull; /* 1 year */
     if (ns > max_ns) ns = max_ns;
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    uint64_t nsec = (uint64_t)ts.tv_nsec + (ns % 1000000000ull);
-    ts.tv_sec += (time_t)(ns / 1000000000ull + nsec / 1000000000ull);
-    ts.tv_nsec = (long)(nsec % 1000000000ull);
-
-    __atomic_fetch_add(&g_wd_cond_waits, 1, __ATOMIC_RELAXED);
-    __atomic_fetch_add(&g_wd_in_cond_wait, 1, __ATOMIC_RELAXED);
-    pthread_mutex_lock(&rw->mu);
-    rw->writer = 0;
-    pthread_cond_broadcast(&rw->cv);
-    int rc = pthread_cond_timedwait(cv, &rw->mu, &ts);
-    rw->waiting_writers++;
-    while (rw->writer || rw->readers > 0) {
-        pthread_cond_wait(&rw->cv, &rw->mu);
-    }
-    rw->waiting_writers--;
-    rw->writer = 1;
-    pthread_mutex_unlock(&rw->mu);
-    __atomic_fetch_sub(&g_wd_in_cond_wait, 1, __ATOMIC_RELAXED);
-    return rc == ETIMEDOUT ? 0 : 1;
+    struct timespec rel = { (time_t)(ns / 1000000000ull), (long)(ns % 1000000000ull) };
+    uint32_t seq = __atomic_load_n(CV_W(c), __ATOMIC_RELAXED);
+    plat_mutex_unlock(m);
+    errno = 0;
+    int rc = _umtx_op((void *)(uintptr_t)CV_W(c), UMTX_OP_WAIT_UINT_PRIVATE, seq, (void *)(uintptr_t)sizeof(rel), &rel);
+    int to = (rc == ETIMEDOUT || (rc < 0 && errno == ETIMEDOUT));
+    plat_mutex_lock(m);
+    return to ? 0 : 1;
 }
 
 void plat_cond_signal(PlatCond *c) {
-    __atomic_fetch_add(&g_wd_cond_signals, 1, __ATOMIC_RELAXED);
-    pthread_cond_signal(cv_get(c));
+    __atomic_add_fetch(CV_W(c), 1u, __ATOMIC_RELEASE);
+    _umtx_op((void *)(uintptr_t)CV_W(c), UMTX_OP_WAKE_PRIVATE, 1, NULL, NULL);
 }
+
 void plat_cond_broadcast(PlatCond *c) {
-    __atomic_fetch_add(&g_wd_cond_signals, 1, __ATOMIC_RELAXED);
-    pthread_cond_broadcast(cv_get(c));
+    __atomic_add_fetch(CV_W(c), 1u, __ATOMIC_RELEASE);
+    _umtx_op((void *)(uintptr_t)CV_W(c), UMTX_OP_WAKE_PRIVATE, 0x7fffffff, NULL, NULL);
 }
 
 /* ---- Virtual Memory (PS5 Direct Memory via libps5platform ps5_vrange_*) ---- */
@@ -941,10 +1128,12 @@ static int hw_prot_for_16k(const Ps5MemRange *r, uint64_t hp) {
         uint8_t s = r->page_state[base_p + k] & PG_PROT_MASK;
         if (s > mx) mx = s;
     }
-    if (mx >= 3) return PS5_KERNEL_PROT_CPU_READ | PS5_KERNEL_PROT_CPU_WRITE;
-    if (mx == 2) return PS5_KERNEL_PROT_CPU_READ;
+    if (mx >= 3) return PS5_KERNEL_PROT_CPU_READ | PS5_KERNEL_PROT_CPU_WRITE | PS5_PROT_GPU_RW;
+    if (mx == 2) return PS5_KERNEL_PROT_CPU_READ | PS5_PROT_GPU_RW;
     return 0;
 }
+
+static volatile int32_t g_ww_in_handler = 0;
 
 static void clear_hw_clean(Ps5MemRange *r, uint64_t p0, uint64_t p1) {
     if (!r->hw_clean) return;
@@ -953,7 +1142,14 @@ static void clear_hw_clean(Ps5MemRange *r, uint64_t p0, uint64_t p1) {
     uint64_t hp1 = (p1 + 3u) >> 2;
     if (hp1 > max_hp) hp1 = max_hp;
     for (uint64_t hp = hp0; hp < hp1; ++hp) {
+        while (__atomic_load_n(&r->hw_clean[hp], __ATOMIC_ACQUIRE) == 2) {
+            _mm_pause();
+        }
         __atomic_store_n(&r->hw_clean[hp], 0, __ATOMIC_RELEASE);
+    }
+    /* Drain any in-flight SIGSEGV handler before changing HW page protection downward or decommitting. */
+    while (__atomic_load_n(&g_ww_in_handler, __ATOMIC_ACQUIRE) > 0) {
+        _mm_pause();
     }
 }
 
@@ -976,6 +1172,7 @@ static void ps5_sync_hw_prot(const Ps5MemRange *r, uint64_t p0, uint64_t p1) {
 
 static void ps5_ww_touch_range(uint64_t addr, size_t n) {
     if (n == 0) return;
+    const int rw_prot = PS5_KERNEL_PROT_CPU_READ | PS5_KERNEL_PROT_CPU_WRITE | PS5_PROT_GPU_RW;
     pthread_mutex_lock(&g_mem_mu);
     Ps5MemRange *r = find_range(addr);
     if (r && r->hw_clean && addr + n <= r->base + r->size) {
@@ -988,16 +1185,16 @@ static void ps5_ww_touch_range(uint64_t addr, size_t n) {
         uint64_t hp = hp0;
         while (hp < hp1) {
             if (__atomic_load_n(&r->hw_clean[hp], __ATOMIC_ACQUIRE) &&
-                hw_prot_for_16k(r, hp) == (PS5_KERNEL_PROT_CPU_READ | PS5_KERNEL_PROT_CPU_WRITE)) {
+                hw_prot_for_16k(r, hp) == rw_prot) {
                 uint64_t end_hp = hp + 1;
                 while (end_hp < hp1 &&
                        __atomic_load_n(&r->hw_clean[end_hp], __ATOMIC_ACQUIRE) &&
-                       hw_prot_for_16k(r, end_hp) == (PS5_KERNEL_PROT_CPU_READ | PS5_KERNEL_PROT_CPU_WRITE)) {
+                       hw_prot_for_16k(r, end_hp) == rw_prot) {
                     end_hp++;
                 }
                 sceKernelMprotect((void *)(uintptr_t)(r->base + (hp << 14)),
                                   (size_t)((end_hp - hp) << 14),
-                                  PS5_KERNEL_PROT_CPU_READ | PS5_KERNEL_PROT_CPU_WRITE);
+                                  rw_prot);
                 for (uint64_t h = hp; h < end_hp; ++h) {
                     __atomic_store_n(&r->hw_clean[h], 0, __ATOMIC_RELEASE);
                 }
@@ -1033,6 +1230,7 @@ int plat_mem_commit(uint64_t addr, size_t n) {
     uint64_t p1 = ((addr + n - r->base) + 0xFFFull) >> 12;
     clear_hw_clean(r, p0, p1);
     for (uint64_t p = p0; p < p1; ++p) r->page_state[p] = 3u | PG_DIRTY; /* RW + dirty */
+    ps5_sync_hw_prot(r, p0, p1);
     __atomic_fetch_add(&g_wd_commits, 1, __ATOMIC_RELAXED);
     pthread_mutex_unlock(&g_mem_mu);
     return 1;
@@ -1078,7 +1276,8 @@ int plat_mem_decommit(uint64_t addr, uint64_t n) {
                 if (zp0 < zp1) {
                     void *hw_va = (void *)(uintptr_t)(r->base + ((zp0 >> 2) << 14));
                     size_t hw_len = (size_t)((((zp1 + 3u) >> 2) - (zp0 >> 2)) << 14);
-                    sceKernelMprotect(hw_va, hw_len, PS5_KERNEL_PROT_CPU_READ | PS5_KERNEL_PROT_CPU_WRITE);
+                    sceKernelMprotect(hw_va, hw_len,
+                                      PS5_KERNEL_PROT_CPU_READ | PS5_KERNEL_PROT_CPU_WRITE | PS5_PROT_GPU_RW);
                     memset((void *)(uintptr_t)(r->base + (zp0 << 12)), 0, (size_t)((zp1 - zp0) << 12));
                     ps5_sync_hw_prot(r, zp0, zp1);
                 }
@@ -1105,7 +1304,10 @@ int plat_mem_protect(uint64_t addr, uint64_t n, int prot) {
         clear_hw_clean(r, p0, p1);
         for (uint64_t p = p0; p < p1; ++p) {
             uint8_t old = r->page_state[p];
-            if ((old & PG_PROT_MASK) == 0) had_uncommitted = 1;
+            if ((old & PG_PROT_MASK) == 0) {
+                if (st < 2) continue; /* leave uncommitted PLAT_MEM_RESERVED at state 0 (NOACCESS) */
+                had_uncommitted = 1;
+            }
             uint8_t flags = (old & PG_WATCHED) | ((st == 3) ? PG_DIRTY : (old & PG_DIRTY));
             r->page_state[p] = st | flags;
         }
@@ -1113,8 +1315,7 @@ int plat_mem_protect(uint64_t addr, uint64_t n, int prot) {
          * Never strip permissions from a 16 KiB hardware page if any sibling 4 KiB page
          * still needs higher access (e.g. ThreadType living next to a 4 KiB-aligned moved stack). */
         if (had_uncommitted && st >= 2) {
-            int shm_prot = (st == 3) ? (PS5_SHM_READ | PS5_SHM_WRITE) : PS5_SHM_READ;
-            ps5_vrange_commit((void *)(uintptr_t)addr, (size_t)n, shm_prot);
+            ps5_vrange_commit((void *)(uintptr_t)addr, (size_t)n, PS5_SHM_READ | PS5_SHM_WRITE);
         }
         ps5_sync_hw_prot(r, p0, p1);
     }
@@ -1162,26 +1363,28 @@ uint64_t plat_mem_written(uint64_t addr, uint64_t n, uint64_t *pages, uint64_t m
     if (hp1 > max_hp) hp1 = max_hp;
 
     uint64_t got = 0;
-    uint64_t wp_start = 0, wp_end = 0;
+    const int rw_prot = PS5_KERNEL_PROT_CPU_READ | PS5_KERNEL_PROT_CPU_WRITE | PS5_PROT_GPU_RW;
+    const int ro_prot = PS5_KERNEL_PROT_CPU_READ | PS5_PROT_GPU_RW;
 
+    /* Pass 1: find the max-bounded prefix [hp0, hp_lim) and promote all RW sub-pages of !is_clean pages to PG_DIRTY. */
+    uint64_t total_need = 0;
+    uint64_t hp_lim = hp0;
     for (uint64_t hp = hp0; hp < hp1; ++hp) {
+        if (hw_prot_for_16k(r, hp) != rw_prot) {
+            hp_lim = hp + 1;
+            continue;
+        }
         int is_clean = __atomic_load_n(&r->hw_clean[hp], __ATOMIC_ACQUIRE) != 0;
         uint64_t base_p = hp << 2;
-        int is_rw = (hw_prot_for_16k(r, hp) == (PS5_KERNEL_PROT_CPU_READ | PS5_KERNEL_PROT_CPU_WRITE));
-        if (!is_rw) continue;
-
-        /* If the 16 KiB HW page was writable (not clean), any watched/queried RW sub-page may have been written. */
         if (!is_clean) {
             for (uint64_t k = 0; k < 4; ++k) {
                 uint64_t sp = base_p + k;
                 uint8_t s = r->page_state[sp];
-                if ((s & PG_PROT_MASK) == 3u && ((s & PG_WATCHED) || (sp >= p0 && sp < p1))) {
+                if ((s & PG_PROT_MASK) == 3u) {
                     r->page_state[sp] = s | PG_DIRTY;
                 }
             }
         }
-
-        /* Count dirty sub-pages in this 16 KiB block that fall inside [p0, p1). */
         uint64_t q0 = base_p > p0 ? base_p : p0;
         uint64_t q1 = (base_p + 4u) < p1 ? (base_p + 4u) : p1;
         uint64_t need = 0;
@@ -1189,9 +1392,61 @@ uint64_t plat_mem_written(uint64_t addr, uint64_t n, uint64_t *pages, uint64_t m
             uint8_t s = r->page_state[sp];
             if ((s & PG_PROT_MASK) == 3u && (s & PG_DIRTY)) need++;
         }
-        if (got + need > max) {
+        if (total_need + need > max) {
             break;
         }
+        total_need += need;
+        hp_lim = hp + 1;
+    }
+
+    /* Pass 2 (when reset=1): arm RO + hw_clean=1 BEFORE clearing PG_DIRTY so any concurrent write before
+     * sceKernelMprotect(RO) is still reported by Pass 3, while any write after traps via SIGSEGV. */
+    if (reset) {
+        uint64_t wp_start = 0, wp_end = 0;
+        for (uint64_t hp = hp0; hp < hp_lim; ++hp) {
+            if (hw_prot_for_16k(r, hp) != rw_prot) continue;
+            if (__atomic_load_n(&r->hw_clean[hp], __ATOMIC_ACQUIRE) != 0) continue;
+            uint64_t base_p = hp << 2;
+            uint64_t q0 = base_p > p0 ? base_p : p0;
+            uint64_t q1 = (base_p + 4u) < p1 ? (base_p + 4u) : p1;
+            int outside_dirty = 0;
+            for (uint64_t k = 0; k < 4; ++k) {
+                uint64_t sp = base_p + k;
+                if (sp >= q0 && sp < q1) continue;
+                uint8_t s = r->page_state[sp];
+                if ((s & PG_PROT_MASK) == 3u && (s & PG_DIRTY)) {
+                    outside_dirty = 1;
+                    break;
+                }
+            }
+            if (!outside_dirty) {
+                __atomic_store_n(&r->hw_clean[hp], 1, __ATOMIC_RELEASE);
+                if (wp_end == hp) {
+                    wp_end = hp + 1;
+                } else {
+                    if (wp_end > wp_start) {
+                        sceKernelMprotect((void *)(uintptr_t)(r->base + (wp_start << 14)),
+                                          (size_t)((wp_end - wp_start) << 14),
+                                          ro_prot);
+                    }
+                    wp_start = hp;
+                    wp_end = hp + 1;
+                }
+            }
+        }
+        if (wp_end > wp_start) {
+            sceKernelMprotect((void *)(uintptr_t)(r->base + (wp_start << 14)),
+                              (size_t)((wp_end - wp_start) << 14),
+                              ro_prot);
+        }
+    }
+
+    /* Pass 3: collect dirty sub-pages inside [hp0, hp_lim) and reset PG_DIRTY (without clobbering hw_clean). */
+    for (uint64_t hp = hp0; hp < hp_lim; ++hp) {
+        if (hw_prot_for_16k(r, hp) != rw_prot) continue;
+        uint64_t base_p = hp << 2;
+        uint64_t q0 = base_p > p0 ? base_p : p0;
+        uint64_t q1 = (base_p + 4u) < p1 ? (base_p + 4u) : p1;
         for (uint64_t sp = q0; sp < q1; ++sp) {
             uint8_t s = r->page_state[sp];
             if ((s & PG_PROT_MASK) == 3u) {
@@ -1203,38 +1458,6 @@ uint64_t plat_mem_written(uint64_t addr, uint64_t n, uint64_t *pages, uint64_t m
                 r->page_state[sp] = s;
             }
         }
-
-        /* Arm 16 KiB HW write-protect (RO) once no watched sub-page inside it remains dirty. */
-        if (reset && !is_clean) {
-            int any_dirty = 0;
-            for (uint64_t k = 0; k < 4; ++k) {
-                uint8_t s = r->page_state[base_p + k];
-                if ((s & PG_PROT_MASK) == 3u && (s & PG_WATCHED) && (s & PG_DIRTY)) {
-                    any_dirty = 1;
-                    break;
-                }
-            }
-            if (!any_dirty) {
-                __atomic_store_n(&r->hw_clean[hp], 1, __ATOMIC_RELEASE);
-                if (wp_end == hp) {
-                    wp_end = hp + 1;
-                } else {
-                    if (wp_end > wp_start) {
-                        sceKernelMprotect((void *)(uintptr_t)(r->base + (wp_start << 14)),
-                                          (size_t)((wp_end - wp_start) << 14),
-                                          PS5_KERNEL_PROT_CPU_READ);
-                    }
-                    wp_start = hp;
-                    wp_end = hp + 1;
-                }
-            }
-        }
-    }
-
-    if (wp_end > wp_start) {
-        sceKernelMprotect((void *)(uintptr_t)(r->base + (wp_start << 14)),
-                          (size_t)((wp_end - wp_start) << 14),
-                          PS5_KERNEL_PROT_CPU_READ);
     }
 
     pthread_mutex_unlock(&g_mem_mu);
@@ -1246,19 +1469,37 @@ static void (*g_crash_hook)(const PlatCrash *c) = NULL;
 
 static void ps5_sigsegv_handler(int sig, siginfo_t *si, void *uctx) {
     uint64_t fault_addr = (uint64_t)(uintptr_t)(si ? si->si_addr : NULL);
-    /* Lock-free fast path for PS5 write-watch (hw_clean == 1 -> restore RW and mark dirty). */
+    /* Lock-free fast path for PS5 write-watch: state 1 (CLEAN) -> 2 (FAULTING) -> 0 (DIRTY). */
     if (sig == SIGSEGV && fault_addr) {
         Ps5MemRange *r = find_range(fault_addr);
         if (r && r->hw_clean) {
+            __atomic_fetch_add(&g_ww_in_handler, 1, __ATOMIC_ACQ_REL);
             uint64_t hp = (fault_addr - r->base) >> 14;
-            if (__atomic_load_n(&r->hw_clean[hp], __ATOMIC_ACQUIRE) != 0) {
-                void *hp_va = (void *)(uintptr_t)(r->base + (hp << 14));
-                sceKernelMprotect(hp_va, PS5_KERNEL_PAGE_SIZE,
-                                  PS5_KERNEL_PROT_CPU_READ | PS5_KERNEL_PROT_CPU_WRITE);
-                __atomic_store_n(&r->hw_clean[hp], 0, __ATOMIC_RELEASE);
-                __atomic_fetch_add(&g_wd_ww_faults, 1, __ATOMIC_RELAXED);
+            uint8_t cur = __atomic_load_n(&r->hw_clean[hp], __ATOMIC_ACQUIRE);
+            if (cur == 1) {
+                uint8_t exp = 1;
+                if (__atomic_compare_exchange_n(&r->hw_clean[hp], &exp, 2, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+                    void *hp_va = (void *)(uintptr_t)(r->base + (hp << 14));
+                    sceKernelMprotect(hp_va, PS5_KERNEL_PAGE_SIZE,
+                                      PS5_KERNEL_PROT_CPU_READ | PS5_KERNEL_PROT_CPU_WRITE | PS5_PROT_GPU_RW);
+                    __atomic_store_n(&r->hw_clean[hp], 0, __ATOMIC_RELEASE);
+                    __atomic_fetch_add(&g_wd_ww_faults, 1, __ATOMIC_RELAXED);
+                } else {
+                    while (__atomic_load_n(&r->hw_clean[hp], __ATOMIC_ACQUIRE) == 2) {
+                        _mm_pause();
+                    }
+                }
+                __atomic_fetch_sub(&g_ww_in_handler, 1, __ATOMIC_RELEASE);
                 return;
             }
+            if (cur == 2) {
+                while (__atomic_load_n(&r->hw_clean[hp], __ATOMIC_ACQUIRE) == 2) {
+                    _mm_pause();
+                }
+                __atomic_fetch_sub(&g_ww_in_handler, 1, __ATOMIC_RELEASE);
+                return;
+            }
+            __atomic_fetch_sub(&g_ww_in_handler, 1, __ATOMIC_RELEASE);
         }
     }
     if (g_fault_hook && fault_addr && g_fault_hook(fault_addr)) {
@@ -1833,11 +2074,52 @@ void plat_gpu_load(PlatLoad *l, float *load_pct, float *vram_used_mb) {
     if (vram_used_mb) *vram_used_mb = 0.0f;
 }
 
+static int ps5_direct_totals_cached(uint64_t *out_total, uint64_t *out_free) {
+    static pthread_mutex_t s_dm_mu = PTHREAD_MUTEX_INITIALIZER;
+    static uint64_t s_last_ns = 0;
+    static uint64_t s_total = 0;
+    static uint64_t s_free = 0;
+    static int32_t s_ok = 0;
+
+    pthread_mutex_lock(&s_dm_mu);
+    uint64_t now = plat_now_ns();
+    if (s_last_ns == 0 || now < s_last_ns || (now - s_last_ns) > 50000000ull) {
+        struct { int64_t start, end; int type; } q;
+        int64_t total = sceKernelGetDirectMemorySize();
+        uint64_t tot = 0, free_b = 0;
+        int ok = 0;
+        if (total > 0) {
+            uint64_t held = 0;
+            int64_t off = 0;
+            while (off < total && sceKernelDirectMemoryQuery(off, 1, &q, sizeof q) == 0 && q.end > q.start) {
+                held += (uint64_t)(q.end - q.start);
+                off = q.end;
+            }
+            tot = (uint64_t)total;
+            free_b = (held <= tot) ? (tot - held) : 0;
+            ok = 1;
+        }
+        s_total = tot;
+        s_free = free_b;
+        s_ok = ok;
+        uint64_t done_ns = plat_now_ns();
+        s_last_ns = done_ns ? done_ns : 1;
+    }
+    uint64_t tot = s_total;
+    uint64_t free_b = s_free;
+    int ok = s_ok;
+    pthread_mutex_unlock(&s_dm_mu);
+
+    if (out_total) *out_total = tot;
+    if (out_free) *out_free = free_b;
+    return ok;
+}
+
 void plat_mem_info(float *used_mb, float *total_mb, float *proc_mb) {
-    struct ps5_memory_stats s;
-    if (ps5_memory_query(&s)) {
-        float tot = (float)(s.total_bytes / (1024.0 * 1024.0));
-        float used = (float)((s.total_bytes - s.free_bytes) / (1024.0 * 1024.0));
+    uint64_t tot_b = 0, free_b = 0;
+    if (ps5_direct_totals_cached(&tot_b, &free_b)) {
+        float tot = (float)((double)tot_b / (1024.0 * 1024.0));
+        float used = (float)((double)(tot_b >= free_b ? tot_b - free_b : 0) / (1024.0 * 1024.0));
         if (total_mb) *total_mb = tot;
         if (used_mb) *used_mb = used;
         if (proc_mb) *proc_mb = used;
@@ -1857,10 +2139,10 @@ void plat_commit_info(double *proc_mb, double *used_mb, double *limit_mb) {
 }
 
 void plat_mem_room(uint64_t *commit_room, uint64_t *phys_room) {
-    struct ps5_memory_stats s;
-    if (ps5_memory_query(&s)) {
-        if (commit_room) *commit_room = s.free_bytes;
-        if (phys_room) *phys_room = s.free_bytes;
+    uint64_t free_b = 0;
+    if (ps5_direct_totals_cached(NULL, &free_b)) {
+        if (commit_room) *commit_room = free_b;
+        if (phys_room) *phys_room = free_b;
     } else {
         if (commit_room) *commit_room = 4ull << 30;
         if (phys_room) *phys_room = 4ull << 30;
@@ -1868,10 +2150,10 @@ void plat_mem_room(uint64_t *commit_room, uint64_t *phys_room) {
 }
 
 void plat_process_memory(uint64_t *resident, uint64_t *private_bytes) {
-    struct ps5_memory_stats s;
+    uint64_t tot_b = 0, free_b = 0;
     uint64_t used = 0;
-    if (ps5_memory_query(&s) && s.total_bytes >= s.free_bytes) {
-        used = s.total_bytes - s.free_bytes;
+    if (ps5_direct_totals_cached(&tot_b, &free_b) && tot_b >= free_b) {
+        used = tot_b - free_b;
     }
     if (resident) *resident = used;
     if (private_bytes) *private_bytes = used;

@@ -94,10 +94,11 @@ int totk_ps5_arena_commit(TotkPs5Arena *arena, size_t offset, size_t length, int
     }
 
     void *target = (void *)((uintptr_t)arena->base + aligned_off);
+    int map_prot = prot ? (prot | PS5_PROT_GPU_RW) : 0;
     rc = sceKernelMapDirectMemory(
         &target,
         commit_len,
-        prot,
+        map_prot,
         PS5_KERNEL_MAP_FIXED,
         phys,
         PS5_KERNEL_DIRECT_ALIGNMENT

@@ -70,8 +70,11 @@ def stage_appdir() -> Path:
     copy_clean_tree(ps5_kit_src / "tools", ps5_kit_dst / "tools")
     for sub in ("lib", "link", "sdk"):
         copy_clean_tree(ps5_kit_src / "kit" / sub, ps5_kit_dst / "kit" / sub)
-    (ps5_kit_dst / "kit" / "obj").mkdir(parents=True)
-    shutil.copy2(ps5_kit_src / "kit" / "obj" / "app_crt.o", ps5_kit_dst / "kit" / "obj" / "app_crt.o")
+    obj_dst = ps5_kit_dst / "kit" / "obj"
+    obj_dst.mkdir(parents=True)
+    shutil.copy2(ps5_kit_src / "kit" / "obj" / "app_crt.o", obj_dst / "app_crt.o")
+    for opus_obj in sorted((ps5_kit_src / "kit" / "obj").glob("opus_*.o")):
+        shutil.copy2(opus_obj, obj_dst / opus_obj.name)
     (ps5_kit_dst / "kit" / "title" / "sce_module").mkdir(parents=True)
     shutil.copy2(
         ps5_kit_src / "kit" / "title" / "sce_module" / "libc.prx",

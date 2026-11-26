@@ -27,6 +27,8 @@ extern "C" {
 /* Direct-memory reservation backed by PS5 sceKernelReserveVirtualRange +
  * on-demand sceKernelAllocateDirectMemory / sceKernelMapDirectMemory commits.
  * PS5 kernel page = 16 KiB, direct-memory allocation unit = 64 KiB. */
+#define PS5_PROT_GPU_RW (PS5_KERNEL_PROT_GPU_READ | PS5_KERNEL_PROT_GPU_WRITE)
+
 typedef struct TotkPs5Arena {
     void *base;
     size_t reserved_bytes;

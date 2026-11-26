@@ -305,12 +305,148 @@ def prepare_ps5_override(src: Path, rel: Path) -> Path:
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(txt, encoding="utf-8")
         return dst
+    if rel_posix == "gfx_present.c":
+        txt = src.read_text(encoding="utf-8")
+        old_sc = (
+            '    vk_queue_lock();\n'
+            '    vkDeviceWaitIdle(c->device);\n'
+            '    VkSwapchainKHR old = g_sc;\n'
+            '    VkSwapchainLatencyCreateInfoNV sci = {\n'
+            '        .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_LATENCY_CREATE_INFO_NV,\n'
+            '        .latencyModeEnable = VK_TRUE\n'
+            '    };\n'
+            '    VkSwapchainCreateInfoKHR ci = {\n'
+            '        .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,\n'
+            '        .pNext = (c->has_nv_reflex) ? &sci : NULL,\n'
+            '        .surface = g_surface, .minImageCount = count,\n'
+            '        .imageFormat = sf.format, .imageColorSpace = sf.colorSpace, .imageExtent = ext, .imageArrayLayers = 1,\n'
+            '        .imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |\n'
+            '                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,   // every surface supports it (the menu overlay draws into it)\n'
+            '        .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE, .preTransform = caps.currentTransform,\n'
+            '        .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, .presentMode = pick_present_mode(c->phys), .clipped = VK_TRUE,\n'
+            '        .oldSwapchain = old};\n'
+            '    VkResult r = vkCreateSwapchainKHR(c->device, &ci, NULL, &g_sc);\n'
+            '    if (r != VK_SUCCESS) {\n'
+            '        rt_log("gfx: vkCreateSwapchainKHR failed (%d)", (int)r);\n'
+            '        g_sc = old;\n'
+            '        vk_queue_unlock();\n'
+            '        return 0;\n'
+            '    }\n'
+            '    for (uint32_t i = 0; i < g_sc_n; i++) {\n'
+            '        vkDestroySemaphore(c->device, g_render_done[i], NULL);\n'
+            '        if (g_sc_view[i]) vkDestroyImageView(c->device, g_sc_view[i], NULL);\n'
+            '        g_sc_view[i] = VK_NULL_HANDLE;\n'
+            '    }\n'
+            '    if (old) vkDestroySwapchainKHR(c->device, old, NULL);'
+        )
+        new_sc = (
+            '    vk_queue_lock();\n'
+            '    vkDeviceWaitIdle(c->device);\n'
+            '    for (uint32_t i = 0; i < g_sc_n; i++) {\n'
+            '        vkDestroySemaphore(c->device, g_render_done[i], NULL);\n'
+            '        if (g_sc_view[i]) vkDestroyImageView(c->device, g_sc_view[i], NULL);\n'
+            '        g_sc_view[i] = VK_NULL_HANDLE;\n'
+            '    }\n'
+            '    g_sc_n = 0;\n'
+            '    VkSwapchainKHR old = g_sc;\n'
+            '    if (old) {\n'
+            '        vkDestroySwapchainKHR(c->device, old, NULL);\n'
+            '        g_sc = VK_NULL_HANDLE;\n'
+            '    }\n'
+            '    VkSwapchainLatencyCreateInfoNV sci = {\n'
+            '        .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_LATENCY_CREATE_INFO_NV,\n'
+            '        .latencyModeEnable = VK_TRUE\n'
+            '    };\n'
+            '    VkSwapchainCreateInfoKHR ci = {\n'
+            '        .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,\n'
+            '        .pNext = (c->has_nv_reflex) ? &sci : NULL,\n'
+            '        .surface = g_surface, .minImageCount = count,\n'
+            '        .imageFormat = sf.format, .imageColorSpace = sf.colorSpace, .imageExtent = ext, .imageArrayLayers = 1,\n'
+            '        .imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |\n'
+            '                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,   // every surface supports it (the menu overlay draws into it)\n'
+            '        .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE, .preTransform = caps.currentTransform,\n'
+            '        .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, .presentMode = pick_present_mode(c->phys), .clipped = VK_TRUE,\n'
+            '        .oldSwapchain = VK_NULL_HANDLE};\n'
+            '    VkResult r = vkCreateSwapchainKHR(c->device, &ci, NULL, &g_sc);\n'
+            '    if (r != VK_SUCCESS) {\n'
+            '        rt_log("gfx: vkCreateSwapchainKHR failed (%d)", (int)r);\n'
+            '        g_sc = VK_NULL_HANDLE;\n'
+            '        vk_queue_unlock();\n'
+            '        return 0;\n'
+            '    }'
+        )
+        if old_sc not in txt:
+            raise RuntimeError("PS5 gfx_present.c override failed: build_swapchain block not found")
+        txt = txt.replace(old_sc, new_sc, 1)
+        dst = override_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(txt, encoding="utf-8")
+        return dst
     if rel_posix == "vk_fg.cpp":
+        txt = src.read_text(encoding="utf-8")
+        repls = [
+            (
+                '    void *p = aligned_alloc(256, n);',
+                '    void *p = nullptr;\n    if (posix_memalign(&p, 256, n) != 0) p = nullptr;',
+            ),
+            (
+                '    g.sync_ahead = cfg_bool("TOTK_SYNC_AHEAD") && strcmp(cfg_value("TOTK_SYNC_AHEAD"), "check") != 0;   // check: exact',
+                '    g.sync_ahead = 0; /* PS5: nvnSyncWait yields sync_ahead dynamically while vk_fg_engine() != VK_FG_OFF */',
+            ),
+            (
+                '        vk_present_drain();\n        vk_queue_lock();',
+                '        vk_present_drain();\n        rec_drain();\n        vk_queue_lock();',
+            ),
+            (
+                '        VkCtx *c = vk_ctx();\n'
+                '        vk_queue_lock();\n'
+                '        vkDeviceWaitIdle(c->device);\n'
+                '        vk_queue_unlock();\n'
+                '        sdk_destroy();',
+                '        VkCtx *c = vk_ctx();\n'
+                '        if (g.live) vk_present_drain();\n'
+                '        rec_drain();\n'
+                '        vk_queue_lock();\n'
+                '        vkDeviceWaitIdle(c->device);\n'
+                '        vk_queue_unlock();\n'
+                '        g.show_out = g.show_hl = g.show_win = VK_NULL_HANDLE;\n'
+                '        sdk_destroy();',
+            ),
+        ]
+        for old, new in repls:
+            if old not in txt:
+                raise RuntimeError(f"PS5 vk_fg.cpp override failed: missing {old[:60]!r}")
+            txt = txt.replace(old, new, 1)
+        dst = override_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(txt, encoding="utf-8")
+        return dst
+    if rel_posix == "nvn_api_core.c":
+        txt = src.read_text(encoding="utf-8")
+        repls = [
+            (
+                'NVN_API(nvnSyncWait) {',
+                'extern int vk_fg_engine(void) __attribute__((weak));\n\nNVN_API(nvnSyncWait) {',
+            ),
+            (
+                '    int mode = timeout && c->x[30] == frame_wait_lr() ? sync_mode() : 0, behind = b->fence_done() < want;',
+                '    int mode = ((!vk_fg_engine || vk_fg_engine() == 0) && timeout && c->x[30] == frame_wait_lr()) ? sync_mode() : 0, behind = b->fence_done() < want;',
+            ),
+        ]
+        for old, new in repls:
+            if old not in txt:
+                raise RuntimeError(f"PS5 nvn_api_core.c override failed: missing {old[:60]!r}")
+            txt = txt.replace(old, new, 1)
+        dst = override_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(txt, encoding="utf-8")
+        return dst
+    if rel_posix == "vk_fsr3.cpp":
         txt = src.read_text(encoding="utf-8")
         old_alloc = '    void *p = aligned_alloc(256, n);'
         new_alloc = '    void *p = nullptr;\n    if (posix_memalign(&p, 256, n) != 0) p = nullptr;'
         if old_alloc not in txt:
-            raise RuntimeError("PS5 vk_fg.cpp override failed: aligned_alloc not found")
+            raise RuntimeError("PS5 vk_fsr3.cpp override failed: aligned_alloc not found")
         txt = txt.replace(old_alloc, new_alloc, 1)
         dst = override_dir / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -378,12 +514,28 @@ def prepare_ps5_override(src: Path, rel: Path) -> Path:
         txt = src.read_text(encoding="utf-8")
         repls = [
             (
+                '    "ZSTD_CHECK", "ZSTD_NATIVE",',
+                '    "PS5_CCX", "PS5_DISPLAY", "PS5_HZ", "PS5_PREPARE_THREADS", "PS5_WATCHDOG", "ZERO_LOCALS", "ZSTD_CHECK", "ZSTD_NATIVE",',
+            ),
+            (
                 '{"PAD_LAYOUT", "auto", "auto|nintendo|xbox", LIVE}',
                 '{"PAD_LAYOUT", "nintendo", "auto|nintendo|xbox", LIVE}',
             ),
             (
                 '{"PROMPTS", "nintendo", "nintendo|xbox|playstation|pc", RESTART}',
                 '{"PROMPTS", "playstation", "nintendo|xbox|playstation|pc", RESTART}',
+            ),
+            (
+                '{"ASYNC_PREEMPT", "1", "0|1|2", RESTART}, {"REPLAY_ASYNC", "0", "0|1", RESTART},',
+                '{"ASYNC_PREEMPT", "2", "0|1|2", RESTART}, {"REPLAY_ASYNC", "1", "0|1", RESTART},',
+            ),
+            (
+                '{"SYNC_AHEAD", "0", "0|1|check", RESTART},',
+                '{"SYNC_AHEAD", "1", "0|1|check", RESTART},',
+            ),
+            (
+                '{"BIND_INC", "0", "0|1|check", RESTART},',
+                '{"BIND_INC", "1", "0|1|check", RESTART},',
             ),
         ]
         for old, new in repls:
@@ -426,15 +578,20 @@ def compile_one(
         cmd += ["-I", str(src.parent), "-I", str(PROJECT_ROOT / "ps5"), f"--embed-dir={src.parent}"]
     cmd += ["-c", str(actual_src), "-o", str(obj)]
     res = subprocess.run(cmd, capture_output=True, text=True)
+    def sanitize(s: str) -> str:
+        return s.replace(str(TOTK_ROOT), "<TOTK_UPSTREAM_SRC>").replace(
+            str(PROJECT_ROOT), "<PS5_PROJECT_ROOT>"
+        )
+
     first_errors = []
     if res.returncode != 0:
         for line in res.stderr.splitlines():
             if "error:" in line or "fatal error:" in line:
-                first_errors.append(line.strip())
+                first_errors.append(sanitize(line.strip()))
                 if len(first_errors) >= 3:
                     break
         if not first_errors:
-            first_errors = res.stderr.strip().splitlines()[-3:]
+            first_errors = [sanitize(line) for line in res.stderr.strip().splitlines()[-3:]]
 
     return {
         "file": rel.as_posix(),
@@ -455,7 +612,10 @@ def main() -> int:
 
     base_flags = [place(f) for f in info["target_flags"]] + [
         "-march=znver2",
-        "-O2",
+        "-O3",
+        "-DNDEBUG",
+        "-mcx16",
+        "-fno-omit-frame-pointer",
         "-fno-strict-aliasing",
         "-DRT_CPU_LEVEL=3",
         # PS5 SIE target rejects preserve_most even though clang __has_attribute(preserve_most)==1
