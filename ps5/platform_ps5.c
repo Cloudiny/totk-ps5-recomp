@@ -454,21 +454,8 @@ int plat_process_affinity(uint64_t mask) {
     return 1;
 }
 
-static int ps5_map_prio(int prio) {
-    /* PS5 scePthreadSetprio: 256 (highest) .. 767 (lowest), 700 = normal */
-    if (prio >= 2) return 580;
-    if (prio == 1) return 640;
-    if (prio <= -2) return 750;
-    if (prio == -1) return 730;
-    return 700;
-}
-
-void plat_thread_priority(int prio) {
-    scePthreadSetprio(pthread_self(), ps5_map_prio(prio));
-}
-void plat_thread_set_priority(PlatThread *t, int prio) {
-    if (t) scePthreadSetprio(t->pt, ps5_map_prio(prio));
-}
+void plat_thread_priority(int prio) { (void)prio; }
+void plat_thread_set_priority(PlatThread *t, int prio) { (void)t; (void)prio; }
 int plat_thread_priority_get(void) { return 0; }
 void plat_yield(void) {
     __atomic_fetch_add(&g_wd_yields, 1, __ATOMIC_RELAXED);
