@@ -678,17 +678,21 @@ def write_ps5_totk_ini(
     data_out: Path,
     *,
     xlate_id: str = DEFAULT_PS5_XLATE_ID,
-    output_res: str = "1920x1080",
-    render_scale: str = "game",
+    output_res: str = "2560x1440",
+    render_scale: str = "75",
     lang: str = "es-419",
     pad_layout: str = "nintendo",
     prompts: str = "playstation",
     replay_async: int = 1,
     ps5_hz: int = 120,
-    frame_gen: str = "off",
+    frame_gen: str = "fsr3",
+    fps_limit: str | int = 60,
+    dynamic_res: int = 0,
+    aniso: str | int = 8,
+    sharpness: int = 35,
 ) -> Path:
     ini_path = data_out / "totk.ini"
-    fps_limit_line = f"fps_limit = {int(ps5_hz)}\n" if frame_gen == "fsr3" else "fps_limit = 60\n"
+    fps_limit_line = f"fps_limit = {fps_limit}\n"
     ini_path.write_text(
         "# PS5 Tears of the Kingdom configuration (/data/totk-ps5/totk.ini)\n"
         "TOTK_FULLSCREEN=1\n"
@@ -712,9 +716,12 @@ def write_ps5_totk_ini(
         f"window_size = {output_res}\n"
         f"output_res = {output_res}\n"
         f"render_scale = {render_scale}\n"
+        f"dynamic_res = {int(dynamic_res)}\n"
+        f"aniso = {aniso}\n"
         "upscaler = fsr\n"
         "scene_upscaler = off\n"
-        "sharpness = 40\n"
+        f"sharpness = {int(sharpness)}\n"
+        "movie_aspect = keep\n"
         "hdr = 0\n"
         "\n"
         "[frame rate]\n"
@@ -753,11 +760,12 @@ def build_full_ps5_game(
     build_prompts: bool = True,
     pretranslate_shaders: bool = False,
     mods: list[Path] | None = None,
-    output_res: str = "1920x1080",
-    render_scale: str = "game",
+    output_res: str = "2560x1440",
+    render_scale: str = "75",
     lang: str = "es-419",
     ps5_hz: int = 120,
-    frame_gen: str = "off",
+    frame_gen: str = "fsr3",
+    fps_limit: str | int = 60,
 ) -> Path:
     t0 = time.time()
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -1071,6 +1079,7 @@ def build_full_ps5_game(
         lang=lang,
         ps5_hz=ps5_hz,
         frame_gen=frame_gen,
+        fps_limit=fps_limit,
     )
     (out_root / "PS5_LAYOUT.txt").write_text(PS5_LAYOUT_TEXT, encoding="utf-8")
 

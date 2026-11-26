@@ -1,0 +1,3 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["AppDir", "build", "out", "third_party", ".venv", ".git"]

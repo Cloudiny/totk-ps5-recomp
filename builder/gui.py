@@ -366,10 +366,10 @@ def run_gui() -> int:
         "romfs": tk.StringVar(value=""),
         "shaders": tk.StringVar(value=""),
         "out": tk.StringVar(value=str(Path.home() / "TOTK-PS5-Out")),
-        "res": tk.StringVar(value="1920x1080"),
+        "res": tk.StringVar(value="2560x1440"),
         "hz": tk.StringVar(value="120"),
-        "frame_gen": tk.StringVar(value="off"),
-        "scale": tk.StringVar(value="game"),
+        "frame_gen": tk.StringVar(value="fsr3"),
+        "scale": tk.StringVar(value="75"),
         "lang": tk.StringVar(value="es-419"),
         "ftp_host": tk.StringVar(value=""),
         "ftp_port": tk.StringVar(value="2121"),
@@ -605,10 +605,10 @@ def run_gui() -> int:
     presets = tk.Frame(c_opt, bg=C_CARD)
     presets.pack(fill="x")
     for k_lbl, vkey, vals, w in (
-        ("lbl_res", "res", ("1920x1080", "2560x1440", "3840x2160"), 11),
+        ("lbl_res", "res", ("2560x1440", "1920x1080", "3840x2160"), 11),
         ("lbl_hz", "hz", ("120", "60"), 5),
         ("lbl_fg", "frame_gen", ("off", "fsr3"), 6),
-        ("lbl_scale", "scale", ("game", "100", "75"), 6),
+        ("lbl_scale", "scale", ("75", "67", "game", "100"), 6),
         ("lbl_lang", "lang", ("es-419", "es-ES", "en-US", "fr-FR", "de-DE", "ja-JP"), 7),
     ):
         cell = tk.Frame(presets, bg=C_CARD)

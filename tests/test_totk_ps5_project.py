@@ -327,7 +327,14 @@ def test_ps5_hot_chunks_and_totk_ini_defaults() -> None:
     ini = (OUT_DATA / "totk.ini").read_text(encoding="utf-8")
     for expected in (
         "replay_async = 1",
-        "frame_gen = off",
+        "output_res = 2560x1440",
+        "window_size = 2560x1440",
+        "render_scale = 75",
+        "dynamic_res = 0",
+        "aniso = 8",
+        "sharpness = 35",
+        "frame_gen = fsr3",
+        "fps_limit = 60",
         "TOTK_SYNC_AHEAD=1",
         "TOTK_BIND_INC=1",
         "TOTK_ASYNC_PREEMPT=2",
@@ -339,3 +346,51 @@ def test_ps5_hot_chunks_and_totk_ini_defaults() -> None:
     assert "/home/" not in probe_json
     probe_data = json.loads(probe_json)
     assert probe_data["passed"] == 131 and probe_data["total"] == 136
+
+
+def test_ps5_1440p_cutscene_linear_sampler_and_vpx_guards(tmp_path: Path) -> None:
+    import sys
+
+    assert TOTK_SOURCE.is_dir(), "Reference totk-linux-native-recomp repo missing"
+    rt_dir = TOTK_SOURCE / "runtime"
+    assert rt_dir.is_dir(), f"Missing upstream runtime directory: {rt_dir}"
+
+    sys.path.insert(0, str(PROJECT_ROOT))
+    sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+    from builder.pipeline import write_ps5_totk_ini
+    from probe_runtime_compile import prepare_ps5_override
+
+    ov_movie = prepare_ps5_override(rt_dir / "ov_movie.c", Path("ov_movie.c")).read_text(encoding="utf-8")
+    assert "ps5_movie_active" in ov_movie
+    assert "vk_sampler_bump_gen" in ov_movie
+
+    vk_texture = prepare_ps5_override(rt_dir / "vk_texture.c", Path("vk_texture.c")).read_text(encoding="utf-8")
+    assert "vk_sampler_movie_linear_locked" in vk_texture
+    assert "vk_sampler_bump_gen" in vk_texture
+
+    vk_exec_draw = prepare_ps5_override(rt_dir / "vk_exec_draw.c", Path("vk_exec_draw.c")).read_text(encoding="utf-8")
+    assert "ps5_movie_active" in vk_exec_draw
+    assert "vk_sampler_movie_linear_locked" in vk_exec_draw
+    assert "movie_plane" in vk_exec_draw
+
+    cfg_c = prepare_ps5_override(rt_dir / "cfg.c", Path("cfg.c")).read_text(encoding="utf-8")
+    assert '{"DYNAMIC_RES", "0"' in cfg_c
+    assert '{"OUTPUT_RES", "2560x1440"' in cfg_c
+
+    vpx_src = (PROJECT_ROOT / "ps5" / "vpx_ps5.c").read_text(encoding="utf-8")
+    for token in ("avcodec_flush_buffers", "-11", "-35", "-541478725"):
+        assert token in vpx_src, f"Missing '{token}' in ps5/vpx_ps5.c"
+
+    ini_path = write_ps5_totk_ini(tmp_path)
+    ini_txt = ini_path.read_text(encoding="utf-8")
+    for expected in (
+        "output_res = 2560x1440",
+        "window_size = 2560x1440",
+        "render_scale = 75",
+        "dynamic_res = 0",
+        "aniso = 8",
+        "sharpness = 35",
+        "frame_gen = fsr3",
+        "fps_limit = 60",
+    ):
+        assert expected in ini_txt, f"Missing '{expected}' in generated totk.ini"

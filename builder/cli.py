@@ -117,8 +117,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--res",
-        default="1920x1080",
-        help="Default PS5 output resolution (default: 1920x1080; 2560x1440 / 3840x2160 supported)",
+        default="2560x1440",
+        help="Default PS5 output resolution (default: 2560x1440; 1920x1080 / 3840x2160 supported)",
     )
     parser.add_argument(
         "--hz",
@@ -129,11 +129,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--frame-gen",
-        default="off",
+        default="fsr3",
         choices=("off", "fsr3"),
-        help="Default AMD FSR 3.1.5 Frame Generation mode (off or fsr3; default: off)",
+        help="Default AMD FSR 3.1.5 Frame Generation mode (off or fsr3; default: fsr3)",
     )
-    parser.add_argument("--scale", default="game", help="Default 3D render scale (default: game)")
+    parser.add_argument(
+        "--fps-limit",
+        default="60",
+        help="Target frame rate limit (60 locks 2-vblank 60 FPS on 120 Hz FIFO; 90/120/display for VRR)",
+    )
+    parser.add_argument("--scale", default="75", help="Default 3D render scale (default: 75)")
     parser.add_argument("--lang", default="es-419", help="Default game language (default: es-419)")
     parser.add_argument("--work", type=Path, default=None, help="Working build directory")
     parser.add_argument("--out", type=Path, default=None, help="Output directory (receives PPSA99199/ & data_totk_ps5/)")
@@ -197,6 +202,7 @@ def main(argv: list[str] | None = None) -> int:
             lang=args.lang,
             ps5_hz=args.hz,
             frame_gen=args.frame_gen,
+            fps_limit=args.fps_limit,
         )
 
     if args.deploy_ftp:
