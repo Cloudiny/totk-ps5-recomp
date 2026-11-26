@@ -1,0 +1,23 @@
+# Build artifacts & caches
+build/
+out/
+AppDir/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# External PS5 kit / large third-party blobs (re-extracted via scripts/extract_ps5_kit.py)
+third_party/ps5-kit/
+third_party/vk_headers/
+third_party/vma/
+*.AppImage
+*.bin
+*.elf
+*.o
+*.a
+*.pack
+
+.ninja_deps
+.ninja_log

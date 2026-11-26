@@ -1,0 +1,424 @@
+{
+  "totk_root": "/home/saul/Projects/totk-linux-native-recomp",
+  "scanned_subdirs": [
+    "runtime",
+    "tools/xlate"
+  ],
+  "total_loc": 222168,
+  "files_with_platform_deps": 46,
+  "category_file_counts": {
+    "linux_futex": 1,
+    "linux_userfaultfd": 1,
+    "linux_epoll_eventfd": 1,
+    "process_spawn": 2,
+    "dlopen_vulkan": 1,
+    "sdl3": 14,
+    "libopus": 1,
+    "libvpx_or_ffmpeg": 1,
+    "win32_only": 17,
+    "vulkan_ext": 19,
+    "mmap_direct": 1,
+    "pthreads": 1,
+    "signals": 1
+  },
+  "vulkan_extensions_referenced": [
+    "VK_EXT_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_EXTENSION_NAME",
+    "VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME",
+    "VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME",
+    "VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME",
+    "VK_EXT_DEBUG_UTILS_EXTENSION_NAME",
+    "VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME",
+    "VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME",
+    "VK_EXT_DEVICE_ADDRESS_BINDING_REPORT_EXTENSION_NAME",
+    "VK_EXT_DEVICE_FAULT_EXTENSION_NAME",
+    "VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME",
+    "VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME",
+    "VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME",
+    "VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME",
+    "VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME",
+    "VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME",
+    "VK_EXT_HDR_METADATA_EXTENSION_NAME",
+    "VK_EXT_MEMORY_BUDGET_EXTENSION_NAME",
+    "VK_EXT_PCI_BUS_INFO_EXTENSION_NAME",
+    "VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME",
+    "VK_EXT_ROBUSTNESS_2_EXTENSION_NAME",
+    "VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME",
+    "VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME",
+    "VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME",
+    "VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME",
+    "VK_EXT_attachment_feedback_loop_dynamic_state",
+    "VK_EXT_attachment_feedback_loop_layout",
+    "VK_EXT_conditional_rendering",
+    "VK_EXT_debug_utils",
+    "VK_EXT_depth_clip_control",
+    "VK_EXT_device_address_binding_report",
+    "VK_EXT_device_fault",
+    "VK_EXT_extended_dynamic_state3",
+    "VK_EXT_external_memory_host",
+    "VK_EXT_graphics_pipeline_library",
+    "VK_EXT_hdr_metadata",
+    "VK_EXT_index_type_uint8",
+    "VK_EXT_memory_budget",
+    "VK_EXT_pci_bus_info",
+    "VK_EXT_vertex_attribute_divisor",
+    "VK_EXT_vertex_input_dynamic_state",
+    "VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME",
+    "VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME",
+    "VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME",
+    "VK_KHR_DYNAMIC_RENDERING_LOCAL_READ_EXTENSION_NAME",
+    "VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME",
+    "VK_KHR_PRESENT_ID_EXTENSION_NAME",
+    "VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME",
+    "VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME",
+    "VK_KHR_SURFACE_EXTENSION_NAME",
+    "VK_KHR_SWAPCHAIN_EXTENSION_NAME",
+    "VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME",
+    "VK_KHR_WIN32_SURFACE_EXTENSION_NAME",
+    "VK_KHR_dynamic_rendering",
+    "VK_KHR_index_type_uint8",
+    "VK_KHR_maintenance5",
+    "VK_KHR_pipeline_library",
+    "VK_KHR_present_id",
+    "VK_KHR_push_descriptor",
+    "VK_KHR_swapchain"
+  ],
+  "files": [
+    {
+      "path": "runtime/audio_mixer.c",
+      "loc": 1161,
+      "hits": {
+        "sdl3": 57
+      }
+    },
+    {
+      "path": "runtime/dispatch.c",
+      "loc": 235,
+      "hits": {
+        "win32_only": 1
+      }
+    },
+    {
+      "path": "runtime/dpi_probe_win.c",
+      "loc": 34,
+      "hits": {
+        "win32_only": 1
+      }
+    },
+    {
+      "path": "runtime/folder_pick_sdl.c",
+      "loc": 43,
+      "hits": {
+        "sdl3": 4
+      }
+    },
+    {
+      "path": "runtime/folder_pick_win.cpp",
+      "loc": 85,
+      "hits": {
+        "win32_only": 1
+      }
+    },
+    {
+      "path": "runtime/gfx_present.c",
+      "loc": 1139,
+      "hits": {
+        "vulkan_ext": 1
+      }
+    },
+    {
+      "path": "runtime/gfx_window_sdl.c",
+      "loc": 341,
+      "hits": {
+        "sdl3": 95,
+        "win32_only": 2
+      }
+    },
+    {
+      "path": "runtime/gfx_window_win.c",
+      "loc": 399,
+      "hits": {
+        "win32_only": 3,
+        "vulkan_ext": 2
+      }
+    },
+    {
+      "path": "runtime/input.c",
+      "loc": 1528,
+      "hits": {
+        "sdl3": 196
+      }
+    },
+    {
+      "path": "runtime/input.h",
+      "loc": 194,
+      "hits": {
+        "sdl3": 1
+      }
+    },
+    {
+      "path": "runtime/input_sdl.c",
+      "loc": 373,
+      "hits": {
+        "sdl3": 114
+      }
+    },
+    {
+      "path": "runtime/input_sdl.h",
+      "loc": 27,
+      "hits": {
+        "sdl3": 5
+      }
+    },
+    {
+      "path": "runtime/input_win.c",
+      "loc": 303,
+      "hits": {
+        "win32_only": 1
+      }
+    },
+    {
+      "path": "runtime/input_win.h",
+      "loc": 10,
+      "hits": {
+        "win32_only": 1
+      }
+    },
+    {
+      "path": "runtime/nvn_api_core.c",
+      "loc": 746,
+      "hits": {
+        "win32_only": 1
+      }
+    },
+    {
+      "path": "runtime/ov_input.c",
+      "loc": 519,
+      "hits": {
+        "sdl3": 1
+      }
+    },
+    {
+      "path": "runtime/ov_media.c",
+      "loc": 180,
+      "hits": {
+        "libopus": 7
+      }
+    },
+    {
+      "path": "runtime/ov_movie.c",
+      "loc": 1068,
+      "hits": {
+        "libvpx_or_ffmpeg": 16
+      }
+    },
+    {
+      "path": "runtime/ov_probe.c",
+      "loc": 1246,
+      "hits": {
+        "sdl3": 1
+      }
+    },
+    {
+      "path": "runtime/platform/linux.c",
+      "loc": 2049,
+      "hits": {
+        "linux_futex": 8,
+        "linux_userfaultfd": 9,
+        "linux_epoll_eventfd": 5,
+        "process_spawn": 5,
+        "dlopen_vulkan": 1,
+        "sdl3": 3,
+        "vulkan_ext": 1,
+        "mmap_direct": 14,
+        "pthreads": 2,
+        "signals": 12
+      }
+    },
+    {
+      "path": "runtime/platform/win32.c",
+      "loc": 2005,
+      "hits": {
+        "win32_only": 6
+      }
+    },
+    {
+      "path": "runtime/prof_win.c",
+      "loc": 372,
+      "hits": {
+        "win32_only": 1
+      }
+    },
+    {
+      "path": "runtime/rdoc.c",
+      "loc": 92,
+      "hits": {
+        "vulkan_ext": 1
+      }
+    },
+    {
+      "path": "runtime/swkbd_sdl.c",
+      "loc": 22,
+      "hits": {
+        "sdl3": 1
+      }
+    },
+    {
+      "path": "runtime/swkbd_win.c",
+      "loc": 185,
+      "hits": {
+        "win32_only": 4
+      }
+    },
+    {
+      "path": "runtime/third_party/FidelityFX/sdk/src/backends/vk/ffx_vk.cpp",
+      "loc": 4693,
+      "hits": {
+        "win32_only": 1,
+        "vulkan_ext": 6
+      }
+    },
+    {
+      "path": "runtime/third_party/FidelityFX/sdk/src/shared/ffx_assert.cpp",
+      "loc": 83,
+      "hits": {
+        "win32_only": 1
+      }
+    },
+    {
+      "path": "runtime/third_party/FidelityFX/sdk/src/shared/ffx_message.cpp",
+      "loc": 64,
+      "hits": {
+        "win32_only": 1
+      }
+    },
+    {
+      "path": "runtime/third_party/imgui/backends/imgui_impl_vulkan.cpp",
+      "loc": 1690,
+      "hits": {
+        "win32_only": 7,
+        "vulkan_ext": 2
+      }
+    },
+    {
+      "path": "runtime/third_party/imgui/backends/imgui_impl_vulkan.h",
+      "loc": 223,
+      "hits": {
+        "vulkan_ext": 2
+      }
+    },
+    {
+      "path": "runtime/third_party/imgui/imgui.cpp",
+      "loc": 17061,
+      "hits": {
+        "process_spawn": 2,
+        "sdl3": 3,
+        "win32_only": 1
+      }
+    },
+    {
+      "path": "runtime/third_party/imgui/imgui.h",
+      "loc": 3766,
+      "hits": {
+        "sdl3": 1
+      }
+    },
+    {
+      "path": "runtime/ui/menu.cpp",
+      "loc": 2047,
+      "hits": {
+        "vulkan_ext": 1
+      }
+    },
+    {
+      "path": "runtime/ui/menu_sdl.cpp",
+      "loc": 83,
+      "hits": {
+        "sdl3": 41
+      }
+    },
+    {
+      "path": "runtime/ui/menu_win.cpp",
+      "loc": 89,
+      "hits": {
+        "win32_only": 1
+      }
+    },
+    {
+      "path": "runtime/vk.h",
+      "loc": 745,
+      "hits": {
+        "vulkan_ext": 14
+      }
+    },
+    {
+      "path": "runtime/vk_caps.c",
+      "loc": 156,
+      "hits": {
+        "vulkan_ext": 5
+      }
+    },
+    {
+      "path": "runtime/vk_device.c",
+      "loc": 637,
+      "hits": {
+        "vulkan_ext": 44
+      }
+    },
+    {
+      "path": "runtime/vk_dump.c",
+      "loc": 925,
+      "hits": {
+        "vulkan_ext": 1
+      }
+    },
+    {
+      "path": "runtime/vk_exec_xfer.c",
+      "loc": 703,
+      "hits": {
+        "vulkan_ext": 1
+      }
+    },
+    {
+      "path": "runtime/vk_fg.cpp",
+      "loc": 836,
+      "hits": {
+        "vulkan_ext": 1
+      }
+    },
+    {
+      "path": "runtime/vk_formats.c",
+      "loc": 171,
+      "hits": {
+        "vulkan_ext": 1
+      }
+    },
+    {
+      "path": "runtime/vk_fsr.c",
+      "loc": 232,
+      "hits": {
+        "vulkan_ext": 1
+      }
+    },
+    {
+      "path": "runtime/vk_fsr3.cpp",
+      "loc": 268,
+      "hits": {
+        "vulkan_ext": 1
+      }
+    },
+    {
+      "path": "runtime/vk_memory.c",
+      "loc": 3536,
+      "hits": {
+        "vulkan_ext": 2
+      }
+    },
+    {
+      "path": "runtime/vk_pipeline.c",
+      "loc": 3789,
+      "hits": {
+        "vulkan_ext": 5
+      }
+    }
+  ]
+}

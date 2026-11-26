@@ -1,0 +1,839 @@
+{
+  "total": 136,
+  "passed": 131,
+  "failed": 5,
+  "results": [
+    {
+      "file": "amiibo.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "astc_probe.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "audio_cat.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "audio_effects.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "audio_mixer.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "audio_reverb.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "audren.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "boot.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "camera_speed.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "cfg.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "cfg_probe.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "cheats.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "cursor_art.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "discord_rpc.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "dispatch.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "flight.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "fma.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "folder_pick_sdl.c",
+      "kind": "rt_c",
+      "ok": false,
+      "errors": [
+        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:12:1: error: unknown type name 'SDL_Window'",
+        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:17:23: error: unknown type name 'SDL_Window'",
+        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:18:28: error: unknown type name 'SDL_Event'"
+      ]
+    },
+    {
+      "file": "frame_rate.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "freecam.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "fs_host.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "gameplay_tweaks.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "gfx_abi_probe.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "gfx_null.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "gfx_present.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "gfx_shader.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "gfx_shader_probe.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "gfx_window_probe.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "gfx_window_sdl.c",
+      "kind": "rt_c",
+      "ok": false,
+      "errors": [
+        "/home/saul/Projects/totk-linux-native-recomp/runtime/gfx_window_sdl.c:19:10: fatal error: 'SDL3/SDL_vulkan.h' file not found"
+      ]
+    },
+    {
+      "file": "hostfn.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "input.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "input_map.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "input_sdl.c",
+      "kind": "rt_c",
+      "ok": false,
+      "errors": [
+        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:12:1: error: unknown type name 'SDL_Window'",
+        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:17:23: error: unknown type name 'SDL_Window'",
+        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:18:28: error: unknown type name 'SDL_Event'"
+      ]
+    },
+    {
+      "file": "ipc.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "kernel.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "kernel_probe.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "loader.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "main.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "memory.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "menu_cursor.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "mods.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "mods_probe.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "motion_fusion.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "mouse_direct.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "movie_probe.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "nfp.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "nvn_api_cmd.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "nvn_api_core.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "nvn_api_obj.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "nvn_ext.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "nvn_probe.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "nvn_procs.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "nvn_tex.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "nvn_tex_probe.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "oom.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "ov_ability.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "ov_gfx.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "ov_input.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "ov_media.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "ov_movie.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "ov_probe.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "ov_system.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "ov_zstd.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "patches.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "perf.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "perfmon.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "platform/common.c",
+      "kind": "plat",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "platform/linux.c",
+      "kind": "plat",
+      "ok": false,
+      "errors": [
+        "/home/saul/Projects/totk-linux-native-recomp/runtime/platform/linux.c:9:10: fatal error: 'linux/fs.h' file not found"
+      ]
+    },
+    {
+      "file": "playtime.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "plugin_init.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "quicksave.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "rdoc.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "resolution.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "restbl.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "restbl_probe.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "romfs.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "sha256.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "svc.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "swkbd.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "swkbd_sdl.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "sysinfo.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "tex_astc.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "tex_astc_mt.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "tex_deswizzle.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "tex_probe.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "third_party/FidelityFX/sdk/src/backends/vk/ffx_vk.cpp",
+      "kind": "ffx",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "third_party/FidelityFX/sdk/src/components/frameinterpolation/ffx_frameinterpolation.cpp",
+      "kind": "ffx",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "third_party/FidelityFX/sdk/src/components/fsr3upscaler/ffx_fsr3upscaler.cpp",
+      "kind": "ffx",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "third_party/FidelityFX/sdk/src/components/opticalflow/ffx_opticalflow.cpp",
+      "kind": "ffx",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "third_party/FidelityFX/sdk/src/shared/ffx_assert.cpp",
+      "kind": "ffx",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "third_party/FidelityFX/sdk/src/shared/ffx_breadcrumbs_list.cpp",
+      "kind": "ffx",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "third_party/FidelityFX/sdk/src/shared/ffx_message.cpp",
+      "kind": "ffx",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "third_party/FidelityFX/sdk/src/shared/ffx_object_management.cpp",
+      "kind": "ffx",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "third_party/imgui/backends/imgui_impl_vulkan.cpp",
+      "kind": "imgui_backend",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "third_party/imgui/imgui.cpp",
+      "kind": "imgui",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "third_party/imgui/imgui_draw.cpp",
+      "kind": "imgui",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "third_party/imgui/imgui_tables.cpp",
+      "kind": "imgui",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "third_party/imgui/imgui_widgets.cpp",
+      "kind": "imgui",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "ui/amiibo_page.cpp",
+      "kind": "ui",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "ui/binds_page.cpp",
+      "kind": "ui",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "ui/cheats_tab.cpp",
+      "kind": "ui",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "ui/menu.cpp",
+      "kind": "ui",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "ui/menu_sdl.cpp",
+      "kind": "ui",
+      "ok": false,
+      "errors": [
+        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:12:1: error: unknown type name 'SDL_Window'",
+        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:17:23: error: unknown type name 'SDL_Window'",
+        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:18:28: error: unknown type name 'SDL_Event'"
+      ]
+    },
+    {
+      "file": "ui/option_rows.cpp",
+      "kind": "ui",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "ui_text.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_ahead.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_astc.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_backend.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_caps.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_color.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_contact.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_crumbs.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_deswizzle.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_device.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_dlaa.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_dump.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_exec.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_exec_draw.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_exec_probe.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_exec_xfer.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_fg.cpp",
+      "kind": "rt_cpp",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_formats.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_fsr.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_fsr3.cpp",
+      "kind": "rt_cpp",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_hdr.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_headroom.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_memory.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_mvcheck.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_mvprev.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_mvsurvey.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_pipeline.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_rec.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_sync.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_texture.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_usnap.c",
+      "kind": "rt_c",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "file": "vk_vma.cpp",
+      "kind": "rt_cpp",
+      "ok": true,
+      "errors": []
+    }
+  ]
+}
