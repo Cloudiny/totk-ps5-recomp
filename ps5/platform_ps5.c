@@ -199,12 +199,6 @@ static void ps5_start_watchdog(void) {
 
 /* ---- Per-PS5-User Save Isolation (Saúl vs Yazmín, etc.) ---- */
 static void ps5_init_user_profile(void) {
-    /* Force FSR 3.1.5 Frame Generation OFF on PS5 unless /data/totk-ps5/enable_fg_test sentinel is present */
-    struct stat st_fg;
-    if (stat("/data/totk-ps5/enable_fg_test", &st_fg) != 0) {
-        setenv("TOTK_FRAME_GEN", "off", 1);
-    }
-
     /* Ensure base saves root exists */
     mkdir("/data/totk-ps5", 0777);
     mkdir("/data/totk-ps5/saves", 0777);

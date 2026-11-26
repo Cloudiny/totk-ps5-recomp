@@ -4,19 +4,20 @@ Port nativo de **The Legend of Zelda: Tears of the Kingdom** para **PlayStation 
 
 ## Características principales
 
-- **Video 1440p / 1080p nativo (`VK_KHR_display`)**: selección automática del modo de salida de la TV según `output_res` en `totk.ini`.
+- **Video 1440p / 1080p @ 60 Hz o 120 Hz nativo (`VK_KHR_display`)**: selección automática del modo de salida de la TV según `output_res` y `TOTK_PS5_HZ` (`60` o `120`) en `totk.ini`. *(Nota: el Mesa RADV del `ps5-kit` actualmente expone swapchains SDR `BGRA8`, sin formato HDR10 PQ de 10 bits.)*
+- **AMD FSR 3.1.5 Frame Generation nativo (`30 → 60 FPS`)**: habilitado en el menú **`Touchpad + Options → Frame rate → Frame generation`**, con soporte completo de vectores de movimiento por objeto (`mvprev`) pre-traducidos en `shader-cache.pack` (`~0.8 ms` CPU / `0.005 ms` espera GPU).
+- **Sistema de 38 Trofeos PS5**: 17 Bronce, 12 Plata, 8 Oro y 1 Platino verificados contra `progress.sav`, con notificación nativa del SO de PS5 (`sceKernelSendNotificationRequest`), banner ImGui, pestaña **Trofeos** en `Touchpad + Options` y progreso aislado por usuario en `trophies.json`.
 - **Controles DualSense e íconos PlayStation por defecto (`△ ○ × □`)**:
   - **`○` (Círculo)** = Confirmar / Interactuar (Switch `A`)
   - **`×` (Equis)** = Cancelar / Correr (Switch `B`)
   - **`△` (Triángulo)** = Saltar (Switch `X`)
   - **`□` (Cuadrado)** = Atacar (Switch `Y`)
-  - **`Touchpad (clic) + Options`** = Abrir menú de opciones en pantalla
+  - **`Touchpad (clic) + Options`** = Abrir menú de opciones y Trofeos
   - **`L3 + R3`** = Mostrar / cambiar overlay de FPS y rendimiento
-- **Partidas independientes por usuario de PS5**: cada perfil de PS5 guarda automáticamente en `/data/totk-ps5/saves/user_<id>/` (migración automática sin pérdida desde `/data/totk-ps5/saves/` en el primer arranque).
-- **Cinemáticas VP9 1080p nativas**: decodificación multi-hilo por slices con FFmpeg VP9 (`libavcodec.a`).
-- **FSR 3.1.5 Frame Generation bloqueado**: oculto del menú y forzado en `off` para evitar cierres en PS5.
-- **Optimización PS5**: `replay_async = 1` por defecto y fijación de hilos calientes (`main`, `render`, `vk recorder`, `vk present`) en núcleos Zen 2 dedicados.
-- **AppImage todo-en-uno**: compila `eboot.bin`, genera íconos PlayStation, pre-traduce/empaqueta shaders para RADV PS5 (`TOTK_ZERO_LOCALS=0`), incluye **MODS RomFS** y envía todo directo a la PS5 por FTP.
+- **Partidas independientes por usuario de PS5**: cada perfil de PS5 guarda automáticamente en `/data/totk-ps5/saves/user_<id>/` (migración automática sin pérdida desde `/data/totk-ps5/saves/` incluyendo `account.uid`).
+- **Cinemáticas VP9 1080p nativas**: decodificación multi-hilo por slices con FFmpeg VP9 (`libavcodec.a` + `libdav1d.a`).
+- **Planificación estable en PS5**: `replay_async = 0` por defecto y sin fijación agresiva de hilos en tiempo real para evitar inanición de hilos guest.
+- **AppImage todo-en-uno**: compila `eboot.bin`, genera íconos PlayStation, pre-traduce/empaqueta shaders para RADV PS5 (`TOTK_ZERO_LOCALS=0` + `mvprev`), soporta presets `60/120 Hz` y `FSR 3 FG`, incluye **MODS RomFS** y envía todo directo a la PS5 por FTP.
 
 ---
 

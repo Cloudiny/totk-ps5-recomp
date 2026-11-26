@@ -91,6 +91,8 @@ def main(argv: list[str] | None = None) -> int:
         help="RomFS mod folder or .zip archive to stage into /data/totk-ps5/mods/ (repeatable)",
     )
     parser.add_argument("--res", default="2560x1440", help="Default PS5 output resolution (default: 2560x1440)")
+    parser.add_argument("--hz", type=int, default=60, choices=(60, 120), help="Default PS5 display refresh rate (60 or 120 Hz)")
+    parser.add_argument("--frame-gen", default="off", choices=("off", "fsr3"), help="Default AMD FSR 3.1.5 Frame Generation mode (off or fsr3)")
     parser.add_argument("--scale", default="100", help="Default 3D render scale (default: 100)")
     parser.add_argument("--lang", default="es-419", help="Default game language (default: es-419)")
     parser.add_argument("--work", type=Path, default=None, help="Working build directory")
@@ -153,6 +155,8 @@ def main(argv: list[str] | None = None) -> int:
             output_res=args.res,
             render_scale=args.scale,
             lang=args.lang,
+            ps5_hz=args.hz,
+            frame_gen=args.frame_gen,
         )
 
     if args.deploy_ftp:

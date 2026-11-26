@@ -472,9 +472,12 @@ def pretranslate_ps5_shaders(
 
     print("[ps5-totk] Packing shader-cache.pack for PS5...")
     run_cmd(
-        [str(paths.python_bin), str(pack_py), str(stage_dir / "shader-cache"), str(sc_out / "shader-cache.pack")],
+        [str(paths.python_bin), str(pack_py), str(stage_dir / "shader-cache")],
         "pack_shader_cache.py",
     )
+    packed_src = stage_dir / "shader-cache" / "shader-cache.pack"
+    if packed_src.is_file():
+        shutil.copy2(packed_src, sc_out / "shader-cache.pack")
     for fname in ("shader-prepared.bin", "totk_xlate.id"):
         src = stage_dir / fname
         if src.is_file():
@@ -532,8 +535,11 @@ def write_ps5_totk_ini(
     pad_layout: str = "nintendo",
     prompts: str = "playstation",
     replay_async: int = 0,
+    ps5_hz: int = 60,
+    frame_gen: str = "off",
 ) -> Path:
     ini_path = data_out / "totk.ini"
+    fps_limit_line = "fps_limit = 30\n" if frame_gen == "fsr3" else "fps_limit = 60\n"
     ini_path.write_text(
         "# PS5 Tears of the Kingdom configuration (/data/totk-ps5/totk.ini)\n"
         "TOTK_FULLSCREEN=1\n"
@@ -541,6 +547,7 @@ def write_ps5_totk_ini(
         "TOTK_ROMFS_VERIFY=off\n"
         "TOTK_ASYNC_PREEMPT=0\n"
         "TOTK_ZERO_LOCALS=0\n"
+        f"TOTK_PS5_HZ={int(ps5_hz)}\n"
         f"TOTK_XLATE_ID={xlate_id}\n"
         "TOTK_MODS_DIR=/data/totk-ps5/mods\n"
         "\n"
@@ -550,10 +557,12 @@ def write_ps5_totk_ini(
         f"output_res = {output_res}\n"
         f"render_scale = {render_scale}\n"
         "upscaler = fsr\n"
+        "scene_upscaler = off\n"
         "sharpness = 40\n"
         "\n"
         "[frame rate]\n"
-        "frame_gen = off\n"
+        f"{fps_limit_line}"
+        f"frame_gen = {frame_gen}\n"
         "\n"
         "[input]\n"
         f"pad_layout = {pad_layout}\n"
@@ -586,6 +595,8 @@ def build_full_ps5_game(
     output_res: str = "2560x1440",
     render_scale: str = "100",
     lang: str = "es-419",
+    ps5_hz: int = 60,
+    frame_gen: str = "off",
 ) -> Path:
     t0 = time.time()
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -878,6 +889,8 @@ def build_full_ps5_game(
         output_res=output_res,
         render_scale=render_scale,
         lang=lang,
+        ps5_hz=ps5_hz,
+        frame_gen=frame_gen,
     )
     (out_root / "PS5_LAYOUT.txt").write_text(PS5_LAYOUT_TEXT, encoding="utf-8")
 

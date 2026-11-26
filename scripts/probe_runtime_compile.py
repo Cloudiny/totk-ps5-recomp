@@ -97,12 +97,6 @@ def prepare_ps5_override(src: Path, rel: Path) -> Path:
                 '#include "ui/menu.h"\n#include "trophies_ps5.h"',
             ),
             (
-                '    static const UiTextId frame_gen[] = {UI_MENU_FRAME_GEN_OFF, UI_MENU_FRAME_GEN_FSR3};\n'
-                '    opt_choice("TOTK_FRAME_GEN", UI_MENU_FRAME_GEN, frame_gen, 2, UI_MENU_FRAME_GEN_DESC);',
-                '    /* PS5 port: FSR 3.1.5 Frame Generation is unsupported on PS5 and disabled to prevent crashes. */\n'
-                '    (void)0;',
-            ),
-            (
                 'enum { TAB_SCREEN, TAB_GAME, TAB_SOUND, TAB_CONTROLS, TAB_AMIIBO, TAB_MENU, TAB_ADVANCED, TAB_MODS, TAB_CHEATS, TAB_COUNT };',
                 'enum { TAB_SCREEN, TAB_GAME, TAB_SOUND, TAB_CONTROLS, TAB_AMIIBO, TAB_MENU, TAB_ADVANCED, TAB_MODS, TAB_CHEATS, TAB_TROPHIES, TAB_COUNT };',
             ),
@@ -289,90 +283,35 @@ def prepare_ps5_override(src: Path, rel: Path) -> Path:
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(txt, encoding="utf-8")
         return dst
-    if rel_posix == "vk_fg.cpp":
+    if rel_posix == "gfx_shader.c":
         txt = src.read_text(encoding="utf-8")
-        repls = [
-            (
-                '#include <string.h>',
-                '#include <string.h>\n#include <sys/stat.h>',
-            ),
-            (
-                '    return nullptr;\n}',
-                '    rt_log("fg-dbg: device_proc(%s) -> NULL", name);\n    return nullptr;\n}',
-            ),
-            (
-                '    void *p = aligned_alloc(256, n);',
-                '    void *p = nullptr;\n    if (posix_memalign(&p, 256, n) != 0) p = nullptr;',
-            ),
-            (
-                'extern "C" VkFgEngine vk_fg_engine(void) {',
-                'extern "C" VkFgEngine vk_fg_engine(void) {\n'
-                '    static int ps5_fg_gate = -1;\n'
-                '    if (ps5_fg_gate < 0) { struct stat st_; ps5_fg_gate = (stat("/data/totk-ps5/enable_fg_test", &st_) == 0) ? 1 : 0; }\n'
-                '    if (!ps5_fg_gate) return VK_FG_OFF;',
-            ),
-            (
-                'extern "C" int vk_fg_prepare(VkCommandBuffer cb, const VkFgScene *s) {\n    g.prepared = false;',
-                'extern "C" int vk_fg_prepare(VkCommandBuffer cb, const VkFgScene *s) {\n'
-                '    static int dbg_ent; if (!dbg_ent++) rt_log("fg-dbg: enter vk_fg_prepare w=%u h=%u ow=%u oh=%u live=%d cfg=(%u,%u,%u,%u,%d,%u,%u) inv=%d inf=%d", s->w, s->h, s->ow, s->oh, (int)g.live, g.cfg.display_w, g.cfg.display_h, g.cfg.render_w, g.cfg.render_h, (int)g.cfg.color_format, g.cfg.inverted, g.cfg.infinite, s->inverted, s->infinite);\n'
-                '    g.prepared = false;',
-            ),
-            (
-                '    rec_drain();   // the SDK records into cb itself: the recorder must have made every call queued before',
-                '    static int dbg_rd; if (!dbg_rd) rt_log("fg-dbg: before rec_drain");\n'
-                '    rec_drain();   // the SDK records into cb itself: the recorder must have made every call queued before\n'
-                '    if (!dbg_rd++) rt_log("fg-dbg: after rec_drain");',
-            ),
-            (
-                '    FfxErrorCode e = ffxFrameInterpolationPrepare(&g.fi, &pd);',
-                '    static int dbg_p; if (!dbg_p) rt_log("fg-dbg: enter ffxFrameInterpolationPrepare cb=%p", (void*)cb);\n'
-                '    FfxErrorCode e = ffxFrameInterpolationPrepare(&g.fi, &pd);\n'
-                '    if (!dbg_p++) rt_log("fg-dbg: exit ffxFrameInterpolationPrepare e=%d", (int)e);',
-            ),
-            (
-                '    g.hl_ok = true;\n    return 1;',
-                '    static int dbg_h; if (!dbg_h++) rt_log("fg-dbg: vk_fg_hudless OK %ux%u", w, h);\n'
-                '    g.hl_ok = true;\n    return 1;',
-            ),
-            (
-                '    FfxErrorCode e = ffxOpticalflowContextDispatch(&g.of, &od);',
-                '    static int dbg_g; if (!dbg_g) rt_log("fg-dbg: enter ffxOpticalflowContextDispatch");\n'
-                '    FfxErrorCode e = ffxOpticalflowContextDispatch(&g.of, &od);\n'
-                '    if (!dbg_g) rt_log("fg-dbg: exit opticalflow e=%d, enter interpolation", (int)e);',
-            ),
-            (
-                '        e = ffxFrameInterpolationDispatch(&g.fi, &dd);',
-                '        e = ffxFrameInterpolationDispatch(&g.fi, &dd);\n'
-                '        if (!dbg_g++) rt_log("fg-dbg: exit interpolation e=%d", (int)e);',
-            ),
-        ]
-        for old, new in repls:
-            if old not in txt:
-                raise RuntimeError(f"PS5 vk_fg.cpp override failed: missing {old!r}")
-            txt = txt.replace(old, new, 1)
+        old_tx = '    if (look && (s = disk_load(look, look_iid))) return plat_inc64(&n_hits), mem_insert(s);\n\n    uint64_t skip = stage == GFX_STAGE_CS ? 0 : CODE_SKIP;'
+        new_tx = (
+            '    if (look && (s = disk_load(look, look_iid))) return plat_inc64(&n_hits), mem_insert(s);\n'
+            '    /* PS5 port: no runtime totk_xlate binary exists on console. Avoid writing/deleting\n'
+            '     * temp .code files and spamming rt_log on rare cache misses (e.g. unseen mvprev variants). */\n'
+            '    if (!xlate_exe[0]) {\n'
+            '        static volatile int32_t ps5_no_xlate_log;\n'
+            '        if (plat_inc32(&ps5_no_xlate_log) <= 5)\n'
+            '            rt_log("gfx_shader: PS5 cache miss (no runtime translator); suppressing further miss logs");\n'
+            '        return NULL;\n'
+            '    }\n\n'
+            '    uint64_t skip = stage == GFX_STAGE_CS ? 0 : CODE_SKIP;'
+        )
+        if old_tx not in txt:
+            raise RuntimeError("PS5 gfx_shader.c override failed: translate_one anchor not found")
+        txt = txt.replace(old_tx, new_tx, 1)
         dst = override_dir / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(txt, encoding="utf-8")
         return dst
-    if rel_posix == "vk_dlaa.c":
+    if rel_posix == "vk_fg.cpp":
         txt = src.read_text(encoding="utf-8")
-        repls = [
-            (
-                '    int masked = 0, have = cam && mv_pass(ex, e, zv, 0.0f, 0.0f, 0.0f, &masked, fg_objects());',
-                '    static int dbg_fgm; if (!dbg_fgm) rt_log("fg-dbg: fg_motion before mv_pass cam=%p objects=%d", (const void*)cam, fg_objects());\n'
-                '    int masked = 0, have = cam && mv_pass(ex, e, zv, 0.0f, 0.0f, 0.0f, &masked, fg_objects());\n'
-                '    if (!dbg_fgm) rt_log("fg-dbg: fg_motion after mv_pass have=%d", have);',
-            ),
-            (
-                '    D.fg_mv_ok = vk_fg_prepare(cb, &s);',
-                '    if (!dbg_fgm++) rt_log("fg-dbg: fg_motion calling vk_fg_prepare");\n'
-                '    D.fg_mv_ok = vk_fg_prepare(cb, &s);',
-            ),
-        ]
-        for old, new in repls:
-            if old not in txt:
-                raise RuntimeError(f"PS5 vk_dlaa.c override failed: missing {old!r}")
-            txt = txt.replace(old, new, 1)
+        old_alloc = '    void *p = aligned_alloc(256, n);'
+        new_alloc = '    void *p = nullptr;\n    if (posix_memalign(&p, 256, n) != 0) p = nullptr;'
+        if old_alloc not in txt:
+            raise RuntimeError("PS5 vk_fg.cpp override failed: aligned_alloc not found")
+        txt = txt.replace(old_alloc, new_alloc, 1)
         dst = override_dir / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(txt, encoding="utf-8")

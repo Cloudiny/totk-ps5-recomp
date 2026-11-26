@@ -78,6 +78,8 @@ def launch_gui() -> int:
         "shaders": tk.StringVar(value="/home/saul/Games/Hyrule/TOTK/totk-runtime"),
         "out": tk.StringVar(value=str(Path.home() / "TOTK-PS5-Out")),
         "res": tk.StringVar(value="2560x1440"),
+        "hz": tk.StringVar(value="120"),
+        "frame_gen": tk.StringVar(value="fsr3"),
         "scale": tk.StringVar(value="100"),
         "lang": tk.StringVar(value="es-419"),
         "ftp_host": tk.StringVar(value="10.0.0.195"),
@@ -138,19 +140,27 @@ def launch_gui() -> int:
     presets = tk.Frame(tab_build, bg=bg)
     presets.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(4, 2))
     tk.Label(presets, text="Resolución:", bg=bg, fg=fg).pack(side="left")
-    ttk.Combobox(presets, textvariable=vars_map["res"], values=("2560x1440", "1920x1080"), width=11, state="readonly").pack(
-        side="left", padx=(4, 12)
+    ttk.Combobox(presets, textvariable=vars_map["res"], values=("2560x1440", "1920x1080"), width=10, state="readonly").pack(
+        side="left", padx=(4, 8)
     )
-    tk.Label(presets, text="Escala 3D:", bg=bg, fg=fg).pack(side="left")
-    ttk.Combobox(presets, textvariable=vars_map["scale"], values=("100", "game", "75"), width=7, state="readonly").pack(
-        side="left", padx=(4, 12)
+    tk.Label(presets, text="Hz:", bg=bg, fg=fg).pack(side="left")
+    ttk.Combobox(presets, textvariable=vars_map["hz"], values=("120", "60"), width=4, state="readonly").pack(
+        side="left", padx=(4, 8)
+    )
+    tk.Label(presets, text="FSR3 FG:", bg=bg, fg=fg).pack(side="left")
+    ttk.Combobox(presets, textvariable=vars_map["frame_gen"], values=("fsr3", "off"), width=5, state="readonly").pack(
+        side="left", padx=(4, 8)
+    )
+    tk.Label(presets, text="Escala:", bg=bg, fg=fg).pack(side="left")
+    ttk.Combobox(presets, textvariable=vars_map["scale"], values=("100", "game", "75"), width=5, state="readonly").pack(
+        side="left", padx=(4, 8)
     )
     tk.Label(presets, text="Idioma:", bg=bg, fg=fg).pack(side="left")
     ttk.Combobox(
         presets,
         textvariable=vars_map["lang"],
         values=("es-419", "es-ES", "en-US", "fr-FR", "de-DE", "ja-JP"),
-        width=8,
+        width=6,
         state="readonly",
     ).pack(side="left", padx=4)
 
@@ -299,7 +309,13 @@ def launch_gui() -> int:
                 cmd.append("--no-prompts")
             if bool_map["pretranslate_shaders"].get():
                 cmd.append("--pretranslate-shaders")
-            cmd += ["--res", vars_map["res"].get(), "--scale", vars_map["scale"].get(), "--lang", vars_map["lang"].get()]
+            cmd += [
+                "--res", vars_map["res"].get(),
+                "--hz", vars_map["hz"].get(),
+                "--frame-gen", vars_map["frame_gen"].get(),
+                "--scale", vars_map["scale"].get(),
+                "--lang", vars_map["lang"].get(),
+            ]
             for i in range(mods_list.size()):
                 cmd += ["--mod", mods_list.get(i)]
 
