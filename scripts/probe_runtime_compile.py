@@ -512,50 +512,79 @@ def prepare_ps5_override(src: Path, rel: Path) -> Path:
         return dst
     if rel_posix == "ov_movie.c":
         txt = src.read_text(encoding="utf-8")
-        old_gcount = "static volatile int32_t g_count;                // live host decoders: movie_tick returns at once when 0"
-        new_gcount = (
-            "static volatile int32_t g_count;                // live host decoders: movie_tick returns at once when 0\n"
-            "int ps5_movie_active(void) { return __atomic_load_n(&g_count, __ATOMIC_RELAXED) > 0; }"
-        )
-        if old_gcount not in txt:
-            raise RuntimeError("PS5 ov_movie.c override failed: g_count anchor not found")
-        txt = txt.replace(old_gcount, new_gcount, 1)
+        repls = [
+            (
+                "static volatile int32_t g_count;                // live host decoders: movie_tick returns at once when 0",
+                "static volatile int32_t g_count;                // live host decoders: movie_tick returns at once when 0\n"
+                "extern void vk_sampler_bump_gen(void) __attribute__((weak));\n"
+                "int ps5_movie_active(void) { return __atomic_load_n(&g_count, __ATOMIC_RELAXED) > 0; }",
+            ),
+            (
+                "    plat_inc32(&g_count);",
+                "    if (plat_inc32(&g_count) == 1 && vk_sampler_bump_gen) vk_sampler_bump_gen();",
+            ),
+            (
+                "            plat_dec32(&g_count);",
+                "            if (plat_dec32(&g_count) == 0 && vk_sampler_bump_gen) vk_sampler_bump_gen();",
+            ),
+        ]
+        for old, new in repls:
+            if old not in txt:
+                raise RuntimeError(f"PS5 ov_movie.c override failed: missing {old[:60]!r}")
+            txt = txt.replace(old, new, 1)
         dst = override_dir / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(txt, encoding="utf-8")
         return dst
     if rel_posix == "vk_texture.c":
         txt = src.read_text(encoding="utf-8")
-        old_samp = (
-            "        s->sp = sampler_for(c, &k);\n"
-            "    }\n"
-            "    return s->sp;\n"
-            "}"
-        )
-        new_samp = (
-            "        s->sp = sampler_for(c, &k);\n"
-            "    }\n"
-            "    return s->sp;\n"
-            "}\n"
-            "\n"
-            "VkSampler vk_sampler_movie_linear_locked(int id) {\n"
-            "    VkCtx *c = vk_ctx();\n"
-            "    if (!c) return VK_NULL_HANDLE;\n"
-            "    samp_par k;\n"
-            "    memset(&k, 0, sizeof k);\n"
-            "    if (id >= 0 && id < nsslots && sslots[id].used) k = sslots[id].p;\n"
-            "    else k.ws = k.wt = k.wr = NVN_WRAP_MODE_CLAMP_TO_EDGE;\n"
-            "    k.magf = NVN_MAG_FILTER_LINEAR;\n"
-            "    k.minf = NVN_MIN_FILTER_LINEAR;\n"
-            "    k.aniso = 1;\n"
-            "    k.ws = NVN_WRAP_MODE_CLAMP_TO_EDGE;\n"
-            "    k.wt = NVN_WRAP_MODE_CLAMP_TO_EDGE;\n"
-            "    return sampler_for(c, &k);\n"
-            "}"
-        )
-        if old_samp not in txt:
-            raise RuntimeError("PS5 vk_texture.c override failed: vk_sampler_point_by_id_locked anchor not found")
-        txt = txt.replace(old_samp, new_samp, 1)
+        repls = [
+            (
+                "uint32_t vk_sampler_gen(void) { return __atomic_load_n(&samp_gen, __ATOMIC_RELAXED); }",
+                "uint32_t vk_sampler_gen(void) { return __atomic_load_n(&samp_gen, __ATOMIC_ACQUIRE); }",
+            ),
+            (
+                "    sslots[id].used = 1;\n    samp_gen++;",
+                "    sslots[id].used = 1;\n    __atomic_add_fetch(&samp_gen, 1, __ATOMIC_RELEASE);",
+            ),
+            (
+                "        for (int i = 0; i < nsslots; i++) sslots[i].s = sslots[i].sp = VK_NULL_HANDLE;   // looked up again (the key moves)\n"
+                "        samp_gen++;",
+                "        for (int i = 0; i < nsslots; i++) sslots[i].s = sslots[i].sp = VK_NULL_HANDLE;   // looked up again (the key moves)\n"
+                "        __atomic_add_fetch(&samp_gen, 1, __ATOMIC_RELEASE);",
+            ),
+            (
+                "        s->sp = sampler_for(c, &k);\n"
+                "    }\n"
+                "    return s->sp;\n"
+                "}",
+                "        s->sp = sampler_for(c, &k);\n"
+                "    }\n"
+                "    return s->sp;\n"
+                "}\n"
+                "\n"
+                "VkSampler vk_sampler_movie_linear_locked(int id) {\n"
+                "    VkCtx *c = vk_ctx();\n"
+                "    if (!c) return VK_NULL_HANDLE;\n"
+                "    samp_par k;\n"
+                "    memset(&k, 0, sizeof k);\n"
+                "    if (id >= 0 && id < nsslots && sslots[id].used) k = sslots[id].p;\n"
+                "    else k.ws = k.wt = k.wr = NVN_WRAP_MODE_CLAMP_TO_EDGE;\n"
+                "    k.magf = NVN_MAG_FILTER_LINEAR;\n"
+                "    k.minf = NVN_MIN_FILTER_LINEAR;\n"
+                "    k.aniso = 1;\n"
+                "    k.ws = NVN_WRAP_MODE_CLAMP_TO_EDGE;\n"
+                "    k.wt = NVN_WRAP_MODE_CLAMP_TO_EDGE;\n"
+                "    return sampler_for(c, &k);\n"
+                "}\n"
+                "\n"
+                "void vk_sampler_bump_gen(void) { __atomic_add_fetch(&samp_gen, 1, __ATOMIC_RELEASE); }",
+            ),
+        ]
+        for old, new in repls:
+            if old not in txt:
+                raise RuntimeError(f"PS5 vk_texture.c override failed: missing {old[:60]!r}")
+            txt = txt.replace(old, new, 1)
         dst = override_dir / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(txt, encoding="utf-8")

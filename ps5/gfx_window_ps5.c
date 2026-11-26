@@ -32,8 +32,9 @@ static int g_opened = 0;
 static void want_display_size(int *out_w, int *out_h) {
     int w = 2560, h = 1440;
     const char *disp = cfg_get ? cfg_get("TOTK_PS5_DISPLAY") : NULL;
-    if (!disp || !*disp) disp = cfg_get ? cfg_get("TOTK_OUTPUT_RES") : NULL;
-    if ((!disp || !*disp) && cfg_value) disp = cfg_value("TOTK_OUTPUT_RES");
+    if (!disp || !*disp) {
+        disp = cfg_value ? cfg_value("TOTK_OUTPUT_RES") : (cfg_get ? cfg_get("TOTK_OUTPUT_RES") : NULL);
+    }
     if (disp && *disp) {
         int pw = 0, ph = 0;
         if (sscanf(disp, "%dx%d", &pw, &ph) == 2 && pw >= 1280 && ph >= 720) {
@@ -55,6 +56,24 @@ int wsys_open(void) {
     g_opened = 1;
     rt_log("ps5_wsys: wsys_open OK (%dx%d)", g_width, g_height);
     return 1;
+}
+
+static int pick_mode_for(const VkDisplayModePropertiesKHR *modes, uint32_t mode_count,
+                         int match_w, int match_h, int want_120) {
+    int pick = -1;
+    for (uint32_t i = 0; i < mode_count; ++i) {
+        const VkDisplayModeParametersKHR *p = &modes[i].parameters;
+        if (match_w > 0 && ((int)p->visibleRegion.width != match_w || (int)p->visibleRegion.height != match_h))
+            continue;
+        int is_fast = p->refreshRate >= 61000u;
+        int has_fast = pick >= 0 && modes[pick].parameters.refreshRate >= 61000u;
+        if (want_120) {
+            if (pick < 0 || (is_fast && !has_fast)) pick = (int)i;
+        } else {
+            if (pick < 0 || (!is_fast && has_fast)) pick = (int)i;
+        }
+    }
+    return pick;
 }
 
 VkSurfaceKHR wsys_surface(VkInstance inst) {
@@ -113,20 +132,15 @@ VkSurfaceKHR wsys_surface(VkInstance inst) {
     const char *lim = cfg_get ? cfg_get("TOTK_FPS_LIMIT") : NULL;
     if (lim && atoi(lim) > 60) want_120 = 1;
 
-    int pick = -1;
     for (uint32_t i = 0; i < mode_count; ++i) {
         const VkDisplayModeParametersKHR *p = &modes[i].parameters;
         rt_log("ps5_wsys: mode[%u] %ux%u @ %u mHz", i, p->visibleRegion.width, p->visibleRegion.height, p->refreshRate);
-        if ((int)p->visibleRegion.width == want_w && (int)p->visibleRegion.height == want_h) {
-            int is_fast = p->refreshRate >= 61000u;
-            int has_fast = pick >= 0 && modes[pick].parameters.refreshRate >= 61000u;
-            if (want_120) {
-                if (pick < 0 || (is_fast && !has_fast)) pick = (int)i;
-            } else {
-                if (pick < 0 || (!is_fast && has_fast)) pick = (int)i;
-            }
-        }
     }
+    int pick = pick_mode_for(modes, mode_count, want_w, want_h, want_120);
+    if (pick < 0 && (want_w != 1920 || want_h != 1080))
+        pick = pick_mode_for(modes, mode_count, 1920, 1080, want_120);
+    if (pick < 0)
+        pick = pick_mode_for(modes, mode_count, 0, 0, want_120);
     if (pick < 0) pick = 0;
 
     const VkDisplayModeParametersKHR *mp = &modes[pick].parameters;
