@@ -91,19 +91,154 @@ def prepare_ps5_override(src: Path, rel: Path) -> Path:
     override_dir = PROJECT_ROOT / "build" / "ps5_rt_overrides"
     if rel_posix == "ui/menu.cpp":
         txt = src.read_text(encoding="utf-8")
-        old = (
-            '    static const UiTextId frame_gen[] = {UI_MENU_FRAME_GEN_OFF, UI_MENU_FRAME_GEN_FSR3};\n'
-            '    opt_choice("TOTK_FRAME_GEN", UI_MENU_FRAME_GEN, frame_gen, 2, UI_MENU_FRAME_GEN_DESC);'
-        )
-        new = (
-            '    /* PS5 port: FSR 3.1.5 Frame Generation is unsupported on PS5 and disabled to prevent crashes. */\n'
-            '    (void)0;'
-        )
-        if old not in txt:
-            raise RuntimeError("PS5 menu.cpp override failed: TOTK_FRAME_GEN block not found")
+        repls = [
+            (
+                '#include "ui/menu.h"',
+                '#include "ui/menu.h"\n#include "trophies_ps5.h"',
+            ),
+            (
+                '    static const UiTextId frame_gen[] = {UI_MENU_FRAME_GEN_OFF, UI_MENU_FRAME_GEN_FSR3};\n'
+                '    opt_choice("TOTK_FRAME_GEN", UI_MENU_FRAME_GEN, frame_gen, 2, UI_MENU_FRAME_GEN_DESC);',
+                '    /* PS5 port: FSR 3.1.5 Frame Generation is unsupported on PS5 and disabled to prevent crashes. */\n'
+                '    (void)0;',
+            ),
+            (
+                'enum { TAB_SCREEN, TAB_GAME, TAB_SOUND, TAB_CONTROLS, TAB_AMIIBO, TAB_MENU, TAB_ADVANCED, TAB_MODS, TAB_CHEATS, TAB_COUNT };',
+                'enum { TAB_SCREEN, TAB_GAME, TAB_SOUND, TAB_CONTROLS, TAB_AMIIBO, TAB_MENU, TAB_ADVANCED, TAB_MODS, TAB_CHEATS, TAB_TROPHIES, TAB_COUNT };',
+            ),
+            (
+                'static const UiTextId kTabNames[TAB_COUNT] = {UI_MENU_TAB_SCREEN,   UI_MENU_TAB_GAME,   UI_MENU_TAB_SOUND,\n'
+                '                                              UI_MENU_TAB_CONTROLS, UI_MENU_TAB_AMIIBO, UI_MENU_TAB_MENU,\n'
+                '                                              UI_MENU_TAB_ADVANCED, UI_MENU_TAB_MODS,   UI_MENU_TAB_CHEATS};',
+                'static const UiTextId kTabNames[TAB_COUNT] = {UI_MENU_TAB_SCREEN,   UI_MENU_TAB_GAME,   UI_MENU_TAB_SOUND,\n'
+                '                                              UI_MENU_TAB_CONTROLS, UI_MENU_TAB_AMIIBO, UI_MENU_TAB_MENU,\n'
+                '                                              UI_MENU_TAB_ADVANCED, UI_MENU_TAB_MODS,   UI_MENU_TAB_CHEATS, UI_MENU_TAB_CHEATS};\n'
+                'static const char *ps5_tab_label(int k) { return k == TAB_TROPHIES ? "Trofeos" : menu_text(kTabNames[k]); }\n'
+                'static ImVec4 ps5_trophy_color(Ps5TrophyTier tier, float a) {\n'
+                '    switch (tier) {\n'
+                '    case PS5_TROPHY_PLATINUM: return ImVec4(0.50f, 0.86f, 1.00f, a);\n'
+                '    case PS5_TROPHY_GOLD:     return ImVec4(1.00f, 0.84f, 0.25f, a);\n'
+                '    case PS5_TROPHY_SILVER:   return ImVec4(0.80f, 0.84f, 0.88f, a);\n'
+                '    default:                  return ImVec4(0.84f, 0.54f, 0.30f, a);\n'
+                '    }\n'
+                '}\n'
+                'static const char *ps5_trophy_tier_tag(Ps5TrophyTier tier) {\n'
+                '    switch (tier) {\n'
+                '    case PS5_TROPHY_PLATINUM: return "PLATINO";\n'
+                '    case PS5_TROPHY_GOLD:     return "ORO";\n'
+                '    case PS5_TROPHY_SILVER:   return "PLATA";\n'
+                '    default:                  return "BRONCE";\n'
+                '    }\n'
+                '}\n'
+                'static void tab_trophies(float scale) {\n'
+                '    int total = ps5_trophies_count(), unlocked = 0, b = 0, s = 0, g = 0, p = 0;\n'
+                '    ps5_trophies_summary(&unlocked, &b, &s, &g, &p);\n'
+                '    float pct = total > 0 ? (float)unlocked / (float)total : 0.0f;\n'
+                '    ImGui::TextColored(ImVec4(0.50f, 0.86f, 1.00f, 1.0f),\n'
+                '                       "Trofeos PS5 (%s)  —  %d / %d (%.0f%%)",\n'
+                '                       ps5_trophies_user_label(), unlocked, total, pct * 100.0f);\n'
+                '    ImGui::TextDisabled("Platino: %d   |   Oro: %d   |   Plata: %d   |   Bronce: %d", p, g, s, b);\n'
+                '    ImGui::ProgressBar(pct, ImVec2(-1.0f, 10.0f * scale), "");\n'
+                '    ImGui::Spacing();\n'
+                '    if (ImGui::BeginChild("##trophy_list", ImVec2(0, -48.0f * scale), false)) {\n'
+                '        for (int i = 0; i < total; ++i) {\n'
+                '            Ps5TrophyView tv;\n'
+                '            if (!ps5_trophies_get(i, &tv)) continue;\n'
+                '            ImVec4 col = tv.unlocked ? ps5_trophy_color(tv.tier, 1.0f) : ImVec4(0.50f, 0.53f, 0.56f, 0.85f);\n'
+                '            ImGui::PushID(i);\n'
+                '            ImGui::TextColored(col, "%s  [%s]  %s", tv.unlocked ? "[OK]" : "[  ]", ps5_trophy_tier_tag(tv.tier), tv.title);\n'
+                '            if (tv.target > 1) {\n'
+                '                ImGui::SameLine();\n'
+                '                ImGui::TextDisabled("(%d / %d)", tv.cur > tv.target ? tv.target : tv.cur, tv.target);\n'
+                '            }\n'
+                '            ImGui::Indent(20.0f * scale);\n'
+                '            ImGui::TextDisabled("%s", tv.desc);\n'
+                '            ImGui::Unindent(20.0f * scale);\n'
+                '            ImGui::Separator();\n'
+                '            ImGui::PopID();\n'
+                '        }\n'
+                '    }\n'
+                '    ImGui::EndChild();\n'
+                '}\n'
+                'static void ps5_trophies_draw_banner(uint32_t w, uint32_t h, float scale) {\n'
+                '    Ps5TrophyView tv;\n'
+                '    float alpha = 0.0f;\n'
+                '    if (!ps5_trophies_current_banner(&tv, &alpha) || alpha <= 0.01f) return;\n'
+                '    (void)h;\n'
+                '    float bw = 460.0f * scale;\n'
+                '    float pad = 24.0f * scale;\n'
+                '    ImGui::SetNextWindowPos(ImVec2((float)w - bw - pad, pad), ImGuiCond_Always);\n'
+                '    ImGui::SetNextWindowSize(ImVec2(bw, 0.0f), ImGuiCond_Always);\n'
+                '    ImGui::SetNextWindowBgAlpha(0.88f * alpha);\n'
+                '    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f * scale);\n'
+                '    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.5f * scale);\n'
+                '    ImGui::PushStyleColor(ImGuiCol_Border, ps5_trophy_color(tv.tier, alpha));\n'
+                '    if (ImGui::Begin("##ps5_trophy_toast", nullptr,\n'
+                '                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |\n'
+                '                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoSavedSettings |\n'
+                '                     ImGuiWindowFlags_AlwaysAutoResize)) {\n'
+                '        ImGui::TextColored(ps5_trophy_color(tv.tier, alpha), "TROFEO %s DESBLOQUEADO", ps5_trophy_tier_tag(tv.tier));\n'
+                '        ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, alpha), "%s", tv.title);\n'
+                '        ImGui::TextColored(ImVec4(0.78f, 0.82f, 0.86f, alpha), "%s", tv.desc);\n'
+                '    }\n'
+                '    ImGui::End();\n'
+                '    ImGui::PopStyleColor(1);\n'
+                '    ImGui::PopStyleVar(2);\n'
+                '}',
+            ),
+            (
+                'snprintf(label, sizeof label, "  %s  ###tab%d", menu_text(kTabNames[k]), k);',
+                'snprintf(label, sizeof label, "  %s  ###tab%d", ps5_tab_label(k), k);',
+            ),
+            (
+                '            case TAB_ADVANCED: tab_advanced(scale); break;\n            }',
+                '            case TAB_ADVANCED: tab_advanced(scale); break;\n            case TAB_TROPHIES: tab_trophies(scale); break;\n            }',
+            ),
+            (
+                '        } else if (!g_perf_mode && !toast_live()) {',
+                '        } else if (!g_perf_mode && !toast_live() && !ps5_trophies_toast_active()) {',
+            ),
+            (
+                '    toast_draw(t, scale);\n    ImGui::Render();',
+                '    toast_draw(t, scale);\n    ps5_trophies_draw_banner(t->width, t->height, scale);\n    ImGui::Render();',
+            ),
+        ]
+        for old, new in repls:
+            if old not in txt:
+                raise RuntimeError(f"PS5 menu.cpp override failed: missing {old[:60]!r}")
+            txt = txt.replace(old, new, 1)
         dst = override_dir / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_text(txt.replace(old, new, 1), encoding="utf-8")
+        dst.write_text(txt, encoding="utf-8")
+        return dst
+    if rel_posix == "fs_host.c":
+        txt = src.read_text(encoding="utf-8")
+        repls = [
+            (
+                '#include "host.h"',
+                '#include "host.h"\nextern void ps5_trophies_scan_save(const char *save_root) __attribute__((weak));',
+            ),
+            (
+                '    rt_log("host save storage: %s", save_root);\n    return;',
+                '    rt_log("host save storage: %s", save_root);\n    if (ps5_trophies_scan_save) ps5_trophies_scan_save(save_root);\n    return;',
+            ),
+            (
+                '    rt_log("fs commit save: %d files, %d changed (%.1f MiB written), %d unchanged linked, in %.0f ms%s", nfiles,\n'
+                '           nfiles - linked, bytes / 1048576.0, linked, (plat_now_ns() - t0) / 1e6, waits ? "; waits in save-tx" : "");\n'
+                '    return 0;',
+                '    rt_log("fs commit save: %d files, %d changed (%.1f MiB written), %d unchanged linked, in %.0f ms%s", nfiles,\n'
+                '           nfiles - linked, bytes / 1048576.0, linked, (plat_now_ns() - t0) / 1e6, waits ? "; waits in save-tx" : "");\n'
+                '    if (ps5_trophies_scan_save) ps5_trophies_scan_save(save_root);\n'
+                '    return 0;',
+            ),
+        ]
+        for old, new in repls:
+            if old not in txt:
+                raise RuntimeError(f"PS5 fs_host.c override failed: missing {old[:60]!r}")
+            txt = txt.replace(old, new, 1)
+        dst = override_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(txt, encoding="utf-8")
         return dst
     if rel_posix == "vk_fg.cpp":
         txt = src.read_text(encoding="utf-8")
@@ -164,7 +299,7 @@ def compile_one(
         cmd += ["-Wno-unused-function", "-Wno-unused-variable"]
 
     if actual_src != src:
-        cmd += ["-I", str(src.parent), f"--embed-dir={src.parent}"]
+        cmd += ["-I", str(src.parent), "-I", str(PROJECT_ROOT / "ps5"), f"--embed-dir={src.parent}"]
     cmd += ["-c", str(actual_src), "-o", str(obj)]
     res = subprocess.run(cmd, capture_output=True, text=True)
     first_errors = []

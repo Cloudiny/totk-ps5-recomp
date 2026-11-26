@@ -35,6 +35,7 @@ PS5_SOURCES = [
     "ps5/gfx_window_ps5.c",
     "ps5/sdl3_ps5.c",
     "ps5/vpx_ps5.c",
+    "ps5/trophies_ps5.c",
     "ps5/folder_pick_ps5.c",
     "ps5/input_host_ps5.c",
     "ps5/vk_ps5_trampolines.c",
