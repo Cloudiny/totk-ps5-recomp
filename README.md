@@ -1,82 +1,157 @@
 # PS5 Tears of the Kingdom Recomp (`PPSA99199`)
 
-Port nativo de **The Legend of Zelda: Tears of the Kingdom** para **PlayStation 5 (Prospero)** usando Mesa RADV PS5 (`VK_KHR_display`), libScePad (DualSense), libSceAudioOut, FFmpeg VP9 nativo y aislamiento automático de partidas por usuario de PS5 (`libSceUserService`).
+[![License: MIT](https://img.shields.io/badge/License-MIT-2EE6A6.svg)](LICENSE)
+[![Target](https://img.shields.io/badge/Target-PS5%20Prospero%20(Mesa%20RADV)-38BDF8.svg)](#features)
+[![Builder](https://img.shields.io/badge/Builder-Linux%20x64%20AppImage-E6C36A.svg)](#quick-start-appimage)
 
-## Características principales
+> **Native PlayStation 5 (Prospero) port of *The Legend of Zelda: Tears of the Kingdom* (v1.4.3)** built via static AArch64 → x86\_64 recompilation (`-O2 -march=znver2`), direct `VK_KHR_display` rendering on Mesa RADV (`NAVI21`), AMD FSR 3.1.5 Frame Generation (`mvprev`), DualSense with PlayStation button prompts, 38 native PS5 Trophies, automatic per-PS5-user save isolation, and an all-in-one bilingual (**ES / EN**) Linux AppImage builder with a built-in **GameBanana Mod Browser**.
+>
+> **Port nativo para PlayStation 5 (Prospero) de *The Legend of Zelda: Tears of the Kingdom* (v1.4.3)** con recompilación estática AArch64 → x86\_64 (`-O2 -march=znver2`), renderizado directo `VK_KHR_display` en Mesa RADV, AMD FSR 3.1.5 Frame Generation (`mvprev`), DualSense con íconos PlayStation, 38 Trofeos PS5 nativos, partidas aisladas por usuario de PS5 y un AppImage todo-en-uno bilingüe (**ES / EN**) con buscador integrado de mods de **GameBanana**.
 
-- **Video 1440p / 1080p @ 60 Hz o 120 Hz nativo (`VK_KHR_display`)**: selección automática del modo de salida de la TV según `output_res` y `TOTK_PS5_HZ` (`60` o `120`) en `totk.ini`. *(Nota: el Mesa RADV del `ps5-kit` actualmente expone swapchains SDR `BGRA8`, sin formato HDR10 PQ de 10 bits.)*
-- **AMD FSR 3.1.5 Frame Generation nativo (`30 → 60 FPS`)**: habilitado en el menú **`Touchpad + Options → Frame rate → Frame generation`**, con soporte completo de vectores de movimiento por objeto (`mvprev`) pre-traducidos en `shader-cache.pack` (`~0.8 ms` CPU / `0.005 ms` espera GPU).
-- **Sistema de 38 Trofeos PS5**: 17 Bronce, 12 Plata, 8 Oro y 1 Platino verificados contra `progress.sav`, con notificación nativa del SO de PS5 (`sceKernelSendNotificationRequest`), banner ImGui, pestaña **Trofeos** en `Touchpad + Options` y progreso aislado por usuario en `trophies.json`.
-- **Controles DualSense e íconos PlayStation por defecto (`△ ○ × □`)**:
-  - **`○` (Círculo)** = Confirmar / Interactuar (Switch `A`)
-  - **`×` (Equis)** = Cancelar / Correr (Switch `B`)
-  - **`△` (Triángulo)** = Saltar (Switch `X`)
-  - **`□` (Cuadrado)** = Atacar (Switch `Y`)
-  - **`Touchpad (clic) + Options`** = Abrir menú de opciones y Trofeos
-  - **`L3 + R3`** = Mostrar / cambiar overlay de FPS y rendimiento
-- **Partidas independientes por usuario de PS5**: cada perfil de PS5 guarda automáticamente en `/data/totk-ps5/saves/user_<id>/` (migración automática sin pérdida desde `/data/totk-ps5/saves/` incluyendo `account.uid`).
-- **Cinemáticas VP9 1080p nativas**: decodificación multi-hilo por slices con FFmpeg VP9 (`libavcodec.a` + `libdav1d.a`).
-- **Planificación estable en PS5**: `replay_async = 0` por defecto y sin fijación agresiva de hilos en tiempo real para evitar inanición de hilos guest.
-- **AppImage todo-en-uno**: compila `eboot.bin`, genera íconos PlayStation, pre-traduce/empaqueta shaders para RADV PS5 (`TOTK_ZERO_LOCALS=0` + `mvprev`), soporta presets `60/120 Hz` y `FSR 3 FG`, incluye **MODS RomFS** y envía todo directo a la PS5 por FTP.
+> [!IMPORTANT]
+> **Legal Notice / Aviso Legal:** This repository and the pre-release AppImage contain **ZERO Nintendo game data, ROMs, ExeFS/RomFS assets, shaders, or encryption keys**. You must supply your own legally dumped copy of *Tears of the Kingdom* (`.xci`/`.nsp` + `prod.keys`, or extracted `exefs/` + `romfs/`).
 
 ---
 
-## Estructura exacta en la PS5
+## Features / Características Principales
+
+- **Native 1440p & 1080p @ 60 Hz / 120 Hz (`VK_KHR_display`):** Automatic HDMI display mode selection (`2560×1440 @ 119.88 Hz` or `59.94 Hz`, `1920×1080 @ 119.88 Hz` or `59.94 Hz`) via `output_res` and `TOTK_PS5_HZ` in `totk.ini`.
+- **AMD FSR 3.1.5 Frame Generation (`45–60 FPS` @ 1440p 120 Hz):**
+  - FidelityFX SDK 1.1.4 Frame Interpolation & Optical Flow running natively on PS5 RADV (`NAVI21`) with our PS5 2-byte `wchar_t` UTF-16 fix (`0.79–1.0 ms` CPU overhead, `0.005 ms` GPU wait).
+  - Full **per-object motion vectors (`mvprev`, 14,765 pre-translated vertex shader variants)** eliminating character shimmer around Link (`TOTK_FG_OBJECTS=1`), toggleable live in `Touchpad + Options → Frame rate → Frame generation`.
+- **DualSense + Default PlayStation Button Icons (`△ ○ × □`):**
+  - Native `libScePad` DualSense input and `libSceAudioOut` 48 kHz HDMI audio.
+  - Bundled PlayStation glyph RomFS overlay (`romfs-patches-playstation` for `○` Confirm / `×` Cancel, plus `romfs-patches-playstation-xbox` for `×` Confirm / `○` Cancel).
+- **Automatic Per-PS5-User Save Isolation (`libSceUserService`):**
+  - Detects the signed-in PS5 user (`sceUserServiceGetInitialUser`) and isolates saves, backups, `account.uid`, playtime, and trophies under **`/data/totk-ps5/saves/user_<uid>/`**.
+  - Multiple players on the same PS5 (Profile A, Profile B, etc.) automatically get completely independent save slots and trophy progress.
+  - Legacy saves from `/data/totk-ps5/saves/` are migrated automatically and non-destructively on first launch.
+- **38 Native PS5 Trophies (17 Bronze, 12 Silver, 8 Gold, 1 Platinum):**
+  - Verified directly against TOTK v1.4.3 `progress.sav` MurmurHash3-32 flag hashes (`0.00 ms` gameplay overhead — scanned on save mount/commit).
+  - Triggers native **PS5 OS notifications** (`sceKernelSendNotificationRequest`), a sleek top-right **ImGui trophy toast banner**, a dedicated **`Trofeos` tab** inside `Touchpad + Options`, and per-user persistence in `<TOTK_PROFILE_DIR>/trophies.json`.
+- **Native 1080p VP9 Cutscenes:** Multi-threaded slice decoding via static `libavcodec.a` + `libdav1d.a` + `libavutil.a` (verified 6,421 frames @ 1080p with 0 errors).
+- **All-in-One Bilingual (ES / EN) Linux AppImage (`~153 MiB`):**
+  - Zero external setup — bundles `clang`, `ld.lld`, `ps5-native-tool`, Mesa RADV PS5, PS5 SDK, `libtotkrt_ps5.a`, `hactool` + `extract.py`, `recomp/gen.py`, `make_romfs_patches.py`, and game-free `prep_mvprev` + `totk_xlate` (with patch `0015-motion-previous-position`).
+  - **Built-in GameBanana Mod Browser (TOTK Game ID `7617`):** Search, pick `.zip` archives, auto-detect `romfs/` roots, stage into `/data/totk-ps5/mods/`, and push directly to PS5 over FTP.
+  - **Custom PS5 Artwork:** Ships with custom `icon0.png` + 4K BC7 `pic0.dds`/`pic1.dds`, plus optional cover download from any PNG/JPG URL.
+  - **Safe FTP Deployer (`SAFE_PREFIXES`):** Writes strictly inside `/data/homebrew/PPSA99199` and `/data/totk-ps5`, skips already-uploaded files by size, never overwrites saves, and uploads `param.json` last for ShadowMountPlus / Itemzflow.
+- **Zero-Overhead Hang Detector Watchdog:** Automatically monitors `gfx_counters.frames` every 2 s (`0.000%` CPU) and dumps full thread backtraces (`SIGUSR1`) + free/flexible memory to `/data/totk-ps5/logs/totk.log` if rendering stalls for 8 s.
+
+---
+
+## DualSense Controls / Controles en PS5
+
+| DualSense Button | Action / Acción | Switch Equivalent |
+|---|---|---|
+| **`○` (Circle)** | Confirm / Interact *(default)* | `A` |
+| **`×` (Cross)** | Cancel / Sprint *(default)* | `B` |
+| **`△` (Triangle)** | Jump | `X` |
+| **`□` (Square)** | Attack | `Y` |
+| **`Touchpad (click) + Options`** | Open In-Game Settings, Mods & **Trophies** Menu | Menu |
+| **`L3 + R3`** | Cycle FPS / Performance Overlay | Overlay |
+
+*(You can switch between Nintendo `○=Confirm` and Western `×=Confirm` layouts anytime inside `Touchpad + Options → Controls`.)*
+
+---
+
+## Quick Start (AppImage) / Inicio Rápido
+
+### 1. GUI (Recommended / Recomendado)
+Download `PS5TotkBuilder-v0.1.0-linux-x64.AppImage` from **Releases**, mark executable, and launch:
+```bash
+chmod +x PS5TotkBuilder-v0.1.0-linux-x64.AppImage
+./PS5TotkBuilder-v0.1.0-linux-x64.AppImage
+```
+1. Select your **Base Game (`.xci`/`.nsp`)** + optional **Update `.nsp` (v1.4.3)** + **`prod.keys`** (or already-extracted **`exefs/`** + **`romfs/`** folders).
+2. *(Optional)* Open **`○ Mods & GameBanana`** to browse and inject RomFS mods (e.g., *Serfrost's Defogger (Native)*).
+3. Open **`× Deploy to PS5`**, enter your PS5's local `ftpsrv` IP (port `2121`), check **"Upload `romfs.bin`"** on first install, and click **`⚡ Build + Deploy to PS5`**.
+
+### 2. CLI (Headless / Automation)
+From `.xci`/`.nsp` + `prod.keys`:
+```bash
+./PS5TotkBuilder-v0.1.0-linux-x64.AppImage \
+  --game /path/to/totk_base.xci \
+  --update /path/to/totk_v143.nsp \
+  --keys /path/to/prod.keys \
+  --pretranslate-shaders \
+  --res 2560x1440 --hz 120 --frame-gen fsr3 --scale game --lang es-419 \
+  --deploy-ftp <PS5_IP> --ftp-port 2121 --deploy-romfs
+```
+From already-extracted `exefs/` + `romfs/`:
+```bash
+./PS5TotkBuilder-v0.1.0-linux-x64.AppImage \
+  --exefs /path/to/exefs --romfs /path/to/romfs \
+  --pretranslate-shaders \
+  --mod /path/to/mod.zip \
+  --deploy-ftp <PS5_IP> --ftp-port 2121
+```
+Inspect PS5 directory layout or verify toolchain:
+```bash
+./PS5TotkBuilder-v0.1.0-linux-x64.AppImage --check
+./PS5TotkBuilder-v0.1.0-linux-x64.AppImage --show-layout
+```
+
+---
+
+## Exact PS5 Directory Layout / Estructura Exacta en la PS5
 
 ```text
 /data/homebrew/PPSA99199/
-  ├── eboot.bin                 # Binario FSELF firmado de TOTK PS5
+  ├── eboot.bin                       # Signed PS5 FSELF (-O2 -march=znver2)
   ├── sce_module/
   │   └── libc.prx
   └── sce_sys/
-      ├── icon0.png
-      ├── pic0.dds
-      ├── pic1.dds
-      └── param.json            # Subir al final para ShadowMountPlus
+      ├── icon0.png                   # 512x512 cover icon
+      ├── pic0.dds                    # 4K BC7 title logo
+      ├── pic1.dds                    # 4K BC7 background artwork
+      └── param.json                  # Uploaded last for ShadowMountPlus
 
 /data/totk-ps5/
-  ├── totk.ini                  # Configuración PS5 (1440p, 100%, ○=A, íconos PS, es-419)
-  ├── romfs-index.bin           # Índice RomFS
-  ├── totk_xlate.id             # Identidad de caché de shaders RADV PS5
-  ├── shader-prepared.bin       # Use-masks de 28,667 shaders
-  ├── shader-programs.bin
-  ├── shader-answers.bin
+  ├── totk.ini                        # PS5 config (1440p@120Hz, FSR 3 FG, low-VRAM limits)
+  ├── romfs-index.bin                 # RomFS index
+  ├── totk_xlate.id                   # PS5 RADV shader cache identity
+  ├── shader-prepared.bin             # Pre-warmed shader variant index (43,432 variants)
   ├── shader-cache/
-  │   └── shader-cache.pack     # Shaders pre-traducidos para PS5 RADV
-  ├── romfs-patches-playstation/       # Íconos PlayStation (○ confirmar)
-  ├── romfs-patches-playstation-xbox/  # Íconos PlayStation (× confirmar)
-  ├── exefs/                    # main, main.npdm, sdk, subsdk0
+  │   └── shader-cache.pack           # Pre-translated RADV + mvprev shader pack (~2.7 GiB)
+  ├── romfs-patches-playstation/      # PlayStation prompts (○ Confirm / × Cancel)
+  ├── romfs-patches-playstation-xbox/ # PlayStation prompts (× Confirm / ○ Cancel)
+  ├── exefs/                          # main, main.npdm, sdk, subsdk0 (user supplied)
   ├── romfs/
-  │   └── romfs.bin             # RomFS extraído (~15.86 GiB)
-  ├── mods/                     # MODS RomFS (gestionables en Touchpad + Options)
-  │   └── <mi_mod>/romfs/...
-  ├── saves/                    # Separado automáticamente por usuario de PS5
-  │   ├── user_<id_1>/
-  │   └── user_<id_2>/
+  │   └── romfs.bin                   # Extracted RomFS ~15.86 GiB (user supplied)
+  ├── mods/                           # RomFS mods (toggleable in Touchpad + Options)
+  │   └── <mod_name>/romfs/...
+  ├── saves/                          # Automatically isolated per PS5 user profile
+  │   ├── user_<ps5_uid_1>/           # Save slots, account.uid, playtime.txt, trophies.json
+  │   └── user_<ps5_uid_2>/
   └── logs/
-      └── totk.log
+      └── totk.log                    # Runtime telemetry & hang-detector backtraces
 ```
 
 ---
 
-## Compilación desde código fuente
+## Performance & Known Limitations / Rendimiento y Limitaciones
 
-### 1. Reconstruir runtime PS5 y binario `eboot.bin`
-```bash
-python3 scripts/probe_runtime_compile.py
-python3 scripts/link_runtime_ps5.py
-.venv/bin/python -m builder.cli --build-runtime-lib
-.venv/bin/python -m builder.cli \
-  --exefs /ruta/a/exefs \
-  --romfs /ruta/a/romfs \
-  --pretranslate-shaders \
-  --out ./out \
-  --jobs 10
-```
+| Profile on PS5 (FW 13.40, RADV `NAVI21`) | Resolution | FPS (Great Sky Island) | Notes |
+|---|---|---|---|
+| **Recommended (Default)** | `2560×1440 @ 120 Hz` (`render_scale = game`, `2128×1200`) | **45–60 FPS** (`FSR 3 FG` + `TOTK_FG_OBJECTS=1`) | Sharp 1440p, zero character shimmer, ~1.6 GiB VRAM headroom |
+| **Max Fluidity** | `2560×1440 @ 120 Hz` (`TOTK_FG_OBJECTS=0`) | **55–60 FPS** (`FSR 3 FG`) | Slight halo around Link in motion |
+| **Native (No FG)** | `2560×1440 @ 60/120 Hz` (`frame_gen = off`) | **28–36 FPS** (open world) / **49–60 FPS** (caves) | Zero interpolation latency |
 
-### 2. Generar el AppImage todo-en-uno desde cero (0 datos de Nintendo)
+**Known Limitations (Pre-Release `v0.1.0-alpha`):**
+- **HDR10 & VRR:** The precompiled `ps5-kit` Mesa RADV `VK_KHR_display` WSI currently exposes only 8-bit SDR swapchains (`B8G8R8A8_UNORM` / `B8G8R8A8_SRGB`). Native HDR10 PQ (`A2B10G10R10` / `ST2084`) and VRR require rebuilding Mesa RADV's PS5 WSI against 10-bit `libSceVideoOut`.
+- **4K (`3840×2160`) output:** Exceeds PS5's unified VRAM headroom with TOTK's render targets; use **`2560×1440`** with `render_scale = game` (`83%`) or `1920×1080`.
+- **Do NOT enable `scene_upscaler = fsr3` or `replay_workers > 0`** on PS5 (causes heavy CPU replay overhead).
+- **Mods with custom `.bfsha`/`.bnsh` shaders or PC ReShade presets:** PS5 has no runtime shader translator (`totk_xlate`), so ReShade presets do not run and new `.bfsha` shaders require PC pre-translation. Standard RomFS mods (outfits, models, UI, `EnvPalette` defoggers like *Serfrost's Defogger*, gameplay tweaks) work out of the box.
+- **Occasional long-session freezes:** An always-on `0.000 ms` hang detector is now active in `eboot.bin` to capture exact thread backtraces in `/data/totk-ps5/logs/totk.log` for ongoing stability fixes.
+
+---
+
+## Building From Source / Compilar Desde Código Fuente
+
+Requires Linux x64, Python 3.12+, `clang`, `ninja`, `.NET 10 SDK` (for `totk_xlate`), `appimagetool`, an upstream checkout of `totk-linux-native-recomp` (set via `TOTK_UPSTREAM_SRC` or sibling folder `../totk-linux-native-recomp`), and an extracted `third_party/ps5-kit` toolchain.
+
 ```bash
-# 1) Compilar traductor de shaders (con parche mvprev) + prep_mvprev + hactool
+# 1. Build host shader pre-translator (with mvprev patch 0015) + prep_mvprev + hactool
 python3 ../totk-linux-native-recomp/tools/build_xlate.py --out build/xlate_mvprev
 clang -O2 -I../totk-linux-native-recomp/runtime \
   scripts/prep_mvprev_main.c \
@@ -84,42 +159,24 @@ clang -O2 -I../totk-linux-native-recomp/runtime \
   -lpthread -ldl -lm -o build/xlate_mvprev/prep_mvprev
 python3 ../totk-linux-native-recomp/tools/build_hactool.py --src build/hactool_src --out build/hactool
 
-# 2) Compilar runtime PS5 + empaquetar AppImage autocontenido
+# 2. Cross-compile PS5 runtime + archive libtotkrt_ps5.a
 python3 scripts/probe_runtime_compile.py
 python3 scripts/link_runtime_ps5.py
 .venv/bin/python -m builder.cli --build-runtime-lib
+
+# 3. Package 100% self-contained AppImage (zero game data)
 python3 scripts/make_appimage.py
-# Salida: out/PS5TotkBuilder-v0.1.0-linux-x64.AppImage
-```
+# Output: out/PS5TotkBuilder-v0.1.0-linux-x64.AppImage
 
-### 3. Uso del AppImage (solo necesitas tu copia legal del juego + `prod.keys`)
-- **Interfaz gráfica (4 pestañas: Compilar & Shaders / MODS / Enviar a PS5 FTP / Layout PS5):**
-  ```bash
-  ./out/PS5TotkBuilder-v0.1.0-linux-x64.AppImage
-  ```
-- **CLI desde archivo `.xci`/`.nsp` (+ update `.nsp` opcional) + `prod.keys`:**
-  ```bash
-  ./out/PS5TotkBuilder-v0.1.0-linux-x64.AppImage \
-    --game /ruta/a/totk_base.xci \
-    --update /ruta/a/totk_v143.nsp \
-    --keys /ruta/a/prod.keys \
-    --pretranslate-shaders \
-    --mod /ruta/a/mi_mod.zip \
-    --deploy-ftp <IP_DE_TU_PS5> --ftp-port 2121
-  ```
-- **CLI desde `exefs/` + `romfs/` ya extraídos:**
-  ```bash
-  ./out/PS5TotkBuilder-v0.1.0-linux-x64.AppImage \
-    --exefs /ruta/a/exefs --romfs /ruta/a/romfs \
-    --pretranslate-shaders \
-    --deploy-ftp <IP_DE_TU_PS5> --ftp-port 2121
-  ```
-- **Ver layout PS5 desde terminal:**
-  ```bash
-  ./out/PS5TotkBuilder-v0.1.0-linux-x64.AppImage --show-layout
-  ```
-
-### 4. Tests
-```bash
+# 4. Run verification tests
 pytest -v tests/test_totk_ps5_project.py
 ```
+
+---
+
+## Credits & License
+
+- **Upstream TOTK Recompilation Runtime & Lifter:** `totk-linux-native-recomp` / Savage Wind contributors & MacNativeGames shader/extraction tooling.
+- **PS5 Homebrew Toolchain & Mesa RADV PS5:** PS5 homebrew & `ps5-kit` / Mesa RADV contributors.
+- **AMD FidelityFX SDK 1.1.4 (FSR 3.1.5):** Advanced Micro Devices, Inc. (MIT).
+- **License:** Released under the **MIT License** — see [LICENSE](LICENSE).

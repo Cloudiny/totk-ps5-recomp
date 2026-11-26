@@ -9,7 +9,7 @@
 
 1. **Presupuesto de RAM y tamaño del binario favorable:**
    - TOTK fue diseñado para los **4 GiB de RAM** de Nintendo Switch 1, mientras que una PS5 ofrece **~12 GiB de Direct Memory + 720 MiB de Flexible Memory** (`param.json` → `flexibleMemorySize: 754974720`).
-   - El ejecutable x86_64 ya recompilado de TOTK (`/home/saul/Games/Hyrule/TOTK/totk-runtime/totk`) pesa **261 MiB**, aproximadamente la **mitad** del `eboot.bin` de OOT Switch 2 en Longshot Plus (**521 MiB**).
+   - El ejecutable x86_64 ya recompilado de TOTK (`<totk-runtime>/totk`) pesa **261 MiB**, aproximadamente la **mitad** del `eboot.bin` de OOT Switch 2 en Longshot Plus (**521 MiB**).
 2. **El "motor" PS5 de Longshot Plus ya está completo y funciona localmente:**
    - Extraído desde `PS5LongshotPlusBuilder-v0.3.4-plus-linux-x64.AppImage` (`offset 944632`) a `third_party/ps5-kit/`:
      - **Compilador y linker PS5:** `clang 23.1.5` (`-target x86_64-sie-ps5 -march=znver2`), `ld.lld 23.1.5`, `llvm-nm`, `ps5-native-tool` (linker + firmador FSELF `0x1D3D154F`).
@@ -70,7 +70,7 @@ Aunque es 100% viable, no es un "recompilar y listo". Estos son los 5 subsistema
 
 ## 4. Cómo probar hoy el binario Fase 0 en tu PS5 (opcional)
 
-1. Copia la carpeta `out/PPSA99199/` a `/data/homebrew/PPSA99199/` (o tu carpeta monitoreada por `ShadowMountPlus 1.7beta12`) vía FTP (`10.0.0.195:2121`).
-2. Conéctate al klog en tu PC: `nc 10.0.0.195 3232`.
+1. Copia la carpeta `out/PPSA99199/` a `/data/homebrew/PPSA99199/` (o tu carpeta monitoreada por `ShadowMountPlus 1.7beta12`) vía FTP (`<PS5_IP>:2121`).
+2. Conéctate al klog en tu PC: `nc <PS5_IP> 3232`.
 3. Lanza **"TOTK PS5 (Prueba Fase 0)"** desde el menú de la PS5 y verifica el banner:
    `[totk-ps5] PHASE 0 SMOKE PASS: PS5 RADV Vulkan ready for TOTK!`

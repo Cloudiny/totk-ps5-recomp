@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import json
 import struct
 import subprocess
@@ -12,7 +14,7 @@ KIT_ROOT = PROJECT_ROOT / "third_party" / "ps5-kit"
 OUT_TITLE = PROJECT_ROOT / "out" / "PPSA99199"
 OUT_DATA = PROJECT_ROOT / "out" / "data_totk_ps5"
 APPIMAGE = PROJECT_ROOT / "out" / "PS5TotkBuilder-v0.1.0-linux-x64.AppImage"
-TOTK_SOURCE = Path("/home/saul/Projects/totk-linux-native-recomp")
+TOTK_SOURCE = Path(os.environ.get("TOTK_UPSTREAM_SRC", str(Path(__file__).resolve().parent.parent.parent / "totk-linux-native-recomp")))
 
 
 def test_ps5_kit_extracted_and_complete() -> None:

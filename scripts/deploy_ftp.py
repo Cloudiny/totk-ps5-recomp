@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import os
+
 import argparse
 import sys
 from pathlib import Path
@@ -12,13 +14,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from builder.deploy import deploy_to_ps5  # noqa: E402
 
-DEFAULT_EXEFS = Path("/home/saul/Games/Hyrule/TOTK/ROM/exefs")
-DEFAULT_ROMFS_BIN = Path("/home/saul/Games/Hyrule/TOTK/ROM/romfs/romfs.bin")
+DEFAULT_EXEFS = Path(os.environ.get("TOTK_EXEFS", "./exefs"))
+DEFAULT_ROMFS_BIN = Path(os.environ.get("TOTK_ROMFS_BIN", "./romfs/romfs.bin"))
 
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Deploy TOTK PS5 (PPSA99199 + /data/totk-ps5/) via FTP")
-    p.add_argument("--host", default="10.0.0.195")
+    p.add_argument("--host", default=os.environ.get("PS5_HOST", ""))
     p.add_argument("--port", type=int, default=2121)
     p.add_argument("--out", type=Path, default=PROJECT_ROOT / "out")
     p.add_argument("--skip-romfs", action="store_true")

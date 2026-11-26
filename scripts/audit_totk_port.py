@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Empirically audit /home/saul/Projects/totk-linux-native-recomp/ for PS5 porting blockers.
+"""Empirically audit <TOTK_UPSTREAM_SRC>/ for PS5 porting blockers.
 
 Scans runtime/ and tools/xlate/ for OS/window/audio/media/process/Vulkan dependencies
 and outputs a structured JSON + Markdown summary.
@@ -7,13 +7,15 @@ and outputs a structured JSON + Markdown summary.
 
 from __future__ import annotations
 
+import os
+
 import argparse
 import json
 import re
 import sys
 from pathlib import Path
 
-DEFAULT_TOTK_ROOT = Path("/home/saul/Projects/totk-linux-native-recomp")
+DEFAULT_TOTK_ROOT = Path(os.environ.get("TOTK_UPSTREAM_SRC", str(Path(__file__).resolve().parent.parent.parent / "totk-linux-native-recomp")))
 
 PATTERNS: dict[str, re.Pattern[str]] = {
     "linux_futex": re.compile(r"linux/futex\.h|SYS_futex|FUTEX_WAIT|FUTEX_WAKE"),

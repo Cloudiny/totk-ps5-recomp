@@ -110,9 +110,9 @@
       "kind": "rt_c",
       "ok": false,
       "errors": [
-        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:12:1: error: unknown type name 'SDL_Window'",
-        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:17:23: error: unknown type name 'SDL_Window'",
-        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:18:28: error: unknown type name 'SDL_Event'"
+        "<TOTK_UPSTREAM_SRC>/runtime/input_sdl.h:12:1: error: unknown type name 'SDL_Window'",
+        "<TOTK_UPSTREAM_SRC>/runtime/input_sdl.h:17:23: error: unknown type name 'SDL_Window'",
+        "<TOTK_UPSTREAM_SRC>/runtime/input_sdl.h:18:28: error: unknown type name 'SDL_Event'"
       ]
     },
     {
@@ -180,7 +180,7 @@
       "kind": "rt_c",
       "ok": false,
       "errors": [
-        "/home/saul/Projects/totk-linux-native-recomp/runtime/gfx_window_sdl.c:19:10: fatal error: 'SDL3/SDL_vulkan.h' file not found"
+        "<TOTK_UPSTREAM_SRC>/runtime/gfx_window_sdl.c:19:10: fatal error: 'SDL3/SDL_vulkan.h' file not found"
       ]
     },
     {
@@ -206,9 +206,9 @@
       "kind": "rt_c",
       "ok": false,
       "errors": [
-        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:12:1: error: unknown type name 'SDL_Window'",
-        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:17:23: error: unknown type name 'SDL_Window'",
-        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:18:28: error: unknown type name 'SDL_Event'"
+        "<TOTK_UPSTREAM_SRC>/runtime/input_sdl.h:12:1: error: unknown type name 'SDL_Window'",
+        "<TOTK_UPSTREAM_SRC>/runtime/input_sdl.h:17:23: error: unknown type name 'SDL_Window'",
+        "<TOTK_UPSTREAM_SRC>/runtime/input_sdl.h:18:28: error: unknown type name 'SDL_Event'"
       ]
     },
     {
@@ -420,7 +420,7 @@
       "kind": "plat",
       "ok": false,
       "errors": [
-        "/home/saul/Projects/totk-linux-native-recomp/runtime/platform/linux.c:9:10: fatal error: 'linux/fs.h' file not found"
+        "<TOTK_UPSTREAM_SRC>/runtime/platform/linux.c:9:10: fatal error: 'linux/fs.h' file not found"
       ]
     },
     {
@@ -632,9 +632,9 @@
       "kind": "ui",
       "ok": false,
       "errors": [
-        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:12:1: error: unknown type name 'SDL_Window'",
-        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:17:23: error: unknown type name 'SDL_Window'",
-        "/home/saul/Projects/totk-linux-native-recomp/runtime/input_sdl.h:18:28: error: unknown type name 'SDL_Event'"
+        "<TOTK_UPSTREAM_SRC>/runtime/input_sdl.h:12:1: error: unknown type name 'SDL_Window'",
+        "<TOTK_UPSTREAM_SRC>/runtime/input_sdl.h:17:23: error: unknown type name 'SDL_Window'",
+        "<TOTK_UPSTREAM_SRC>/runtime/input_sdl.h:18:28: error: unknown type name 'SDL_Event'"
       ]
     },
     {

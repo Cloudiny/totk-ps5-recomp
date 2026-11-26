@@ -1,5 +1,5 @@
 {
-  "totk_root": "/home/saul/Projects/totk-linux-native-recomp",
+  "totk_root": "<TOTK_UPSTREAM_SRC>",
   "scanned_subdirs": [
     "runtime",
     "tools/xlate"

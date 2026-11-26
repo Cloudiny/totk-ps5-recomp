@@ -1,6 +1,6 @@
 # TOTK → PS5 Empirical Porting Inventory
 
-- **Source scanned:** `/home/saul/Projects/totk-linux-native-recomp` (`runtime, tools/xlate`)
+- **Source scanned:** `<TOTK_UPSTREAM_SRC>` (`runtime, tools/xlate`)
 - **Total scanned LOC:** `222,168`
 - **Files with platform dependencies:** `46`
 

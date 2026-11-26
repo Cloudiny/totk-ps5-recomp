@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 
 DEFAULT_APPIMAGE = Path(
-    "/home/saul/AppImages/PS5LongshotPlusBuilder-v0.3.4-plus-linux-x64.AppImage"
+    os.environ.get("PS5_KIT_APPIMAGE", "./PS5LongshotPlusBuilder.AppImage")
 )
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DEST = PROJECT_ROOT / "third_party" / "ps5-kit"

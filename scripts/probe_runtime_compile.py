@@ -14,12 +14,12 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-TOTK_ROOT = Path("/home/saul/Projects/totk-linux-native-recomp")
+TOTK_ROOT = Path(os.environ.get("TOTK_UPSTREAM_SRC", str(Path(__file__).resolve().parent.parent.parent / "totk-linux-native-recomp")))
 TOTK_RT = TOTK_ROOT / "runtime"
 KIT_ROOT = PROJECT_ROOT / "third_party" / "ps5-kit"
 GEN_DIR = PROJECT_ROOT / "build" / "gen"
 PROBE_OBJ_DIR = PROJECT_ROOT / "build" / "probe_rt_obj"
-VMA_SRC = Path("/home/saul/Projects/oot-linux-native-recomp/third_party/vma/vk_mem_alloc.h")
+VMA_SRC = Path(os.environ.get("VMA_HEADER", str(Path(__file__).resolve().parent.parent / "third_party" / "vma" / "vk_mem_alloc.h")))
 VMA_DIR = PROJECT_ROOT / "third_party" / "vma"
 
 
@@ -29,7 +29,7 @@ def ensure_generated_headers() -> None:
         sys.path.insert(0, str(TOTK_ROOT / "recomp"))
         import layout  # type: ignore
 
-        mods = layout.layout("/home/saul/Games/Hyrule/TOTK/ROM/exefs")
+        mods = layout.layout(os.environ.get("TOTK_EXEFS", "./exefs"))
         layout.write(mods, str(GEN_DIR))
 
     patches_h = GEN_DIR / "patches.h"

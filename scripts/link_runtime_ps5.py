@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-TOTK_RT = Path("/home/saul/Projects/totk-linux-native-recomp/runtime")
+TOTK_RT = Path(os.environ.get("TOTK_UPSTREAM_SRC", str(Path(__file__).resolve().parent.parent.parent / "totk-linux-native-recomp"))) / "runtime"
 KIT_ROOT = PROJECT_ROOT / "third_party" / "ps5-kit"
 GEN_DIR = PROJECT_ROOT / "build" / "gen"
 RT_OBJ_DIR = PROJECT_ROOT / "build" / "probe_rt_obj"
