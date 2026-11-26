@@ -126,10 +126,6 @@ def prepare_ps5_override(src: Path, rel: Path) -> Path:
                 '{"PROMPTS", "nintendo", "nintendo|xbox|playstation|pc", RESTART}',
                 '{"PROMPTS", "playstation", "nintendo|xbox|playstation|pc", RESTART}',
             ),
-            (
-                '{"REPLAY_ASYNC", "0", "0|1", RESTART}',
-                '{"REPLAY_ASYNC", "1", "0|1", RESTART}',
-            ),
         ]
         for old, new in repls:
             if old not in txt:

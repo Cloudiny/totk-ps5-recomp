@@ -243,7 +243,7 @@ static void ps5_init_user_profile(void) {
         if (!has_any_user_dir) {
             mkdir(user_dir, 0777);
             static const char *const legacy_items[] = {
-                "save", "save-backup", "save-tx", "temp", "cache", "playtime.txt", "resolution"
+                "account.uid", "save", "save-backup", "save-tx", "temp", "cache", "playtime.txt", "resolution"
             };
             for (size_t i = 0; i < sizeof(legacy_items) / sizeof(legacy_items[0]); ++i) {
                 char src[320], dst[320];
@@ -629,19 +629,13 @@ uint64_t plat_counter_hz(void) {
 
 void plat_timer_1ms(void) {}
 int plat_power_full(void) { return -1; }
-static volatile uint32_t g_ps5_perf_core_rr = 0;
-
 int plat_perf_core_setup(char *why, size_t n) {
-    if (why && n) snprintf(why, n, "PS5 Zen 2 (7 app cores)");
-    return 7;
+    if (why && n) snprintf(why, n, "PS5 Zen 2 (OS scheduler across 7 cores)");
+    return 0;
 }
 int plat_thread_perf_core(void) {
-    /* Pin hot runtime threads (main, render, vk recorder, vk present) to distinct cores 0..5 */
-    uint32_t slot = __atomic_fetch_add(&g_ps5_perf_core_rr, 1, __ATOMIC_RELAXED);
-    uint64_t mask = 1ull << (slot % 6u);
-    scePthreadSetaffinity(pthread_self(), mask);
-    scePthreadSetprio(pthread_self(), 640);
-    return 1;
+    /* Let PS5 OS scheduler balance all 7 homogeneous Zen 2 cores; 1-core pinning starves worker threads. */
+    return 0;
 }
 
 void plat_sleep_ns(uint64_t ns) {

@@ -530,7 +530,7 @@ def write_ps5_totk_ini(
     lang: str = "es-419",
     pad_layout: str = "nintendo",
     prompts: str = "playstation",
-    replay_async: int = 1,
+    replay_async: int = 0,
 ) -> Path:
     ini_path = data_out / "totk.ini"
     ini_path.write_text(
