@@ -222,6 +222,28 @@ def detect_totk_version(paths: KitPaths, exefs_dir: Path) -> tuple[str, int, Pat
     return "v143", 143, paths.recomp_dir / "patches-v143.txt", actual_hashes
 
 
+def prepare_ps5_install_src(src: Path, work_dir: Path) -> Path:
+    """Apply PS5-specific overrides to install-side runtime sources (without modifying upstream)."""
+    if src.name == "romfs.c":
+        txt = src.read_text(encoding="utf-8")
+        anchor = "                strcmp(overlays[i].name, restbl_rel))   // restbl_overlay merges both tables"
+        patched = (
+            "                strcmp(overlays[i].name, restbl_rel) &&   // restbl_overlay merges both tables\n"
+            '                strncmp(overlays[i].name, "Mals/", 5))    // PS5: keep Font/UI prompts when mods touch Mals/'
+        )
+        if 'strncmp(overlays[i].name, "Mals/", 5)' not in txt:
+            if anchor not in txt:
+                raise RuntimeError("PS5 romfs.c override failed: overlay_clash restbl_rel anchor not found")
+            txt = txt.replace(anchor, patched, 1)
+        out_dir = work_dir / "ps5_install_overrides"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        dst = out_dir / src.name
+        if not dst.is_file() or dst.read_text(encoding="utf-8") != txt:
+            dst.write_text(txt, encoding="utf-8")
+        return dst
+    return src
+
+
 def build_runtime_archive(paths: KitPaths, out_lib: Path, work_dir: Path) -> Path:
     """Archive all game-independent PS5 TOTK runtime objects into libtotkrt_ps5.a."""
     out_lib.parent.mkdir(parents=True, exist_ok=True)
@@ -911,7 +933,9 @@ def build_full_ps5_game(
                 "  pool = gen",
             ]
 
-    install_srcs = [paths.runtime_dir / name for name in sorted(INSTALL_SIDE)] + [modules_c]
+    install_srcs = [prepare_ps5_install_src(paths.runtime_dir / name, work_dir) for name in sorted(INSTALL_SIDE)] + [
+        modules_c
+    ]
     for src in install_srcs:
         obj = obj_root / "install" / f"{src.stem}.o"
         obj.parent.mkdir(parents=True, exist_ok=True)

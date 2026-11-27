@@ -428,3 +428,19 @@ def test_ps5_pad_data_abi_motion_offsets(tmp_path: Path) -> None:
     )
     subprocess.run(["cc", "-Wall", "-Wextra", "-Werror", str(harness), "-o", str(exe)], check=True)
     subprocess.run([str(exe)], check=True)
+
+
+def test_ps5_romfs_allows_mals_mods_with_playstation_prompts(tmp_path: Path) -> None:
+    import sys
+
+    assert TOTK_SOURCE.is_dir(), "Reference totk-linux-native-recomp repo missing"
+    romfs_src = TOTK_SOURCE / "runtime" / "romfs.c"
+    assert romfs_src.is_file(), f"Missing {romfs_src}"
+
+    sys.path.insert(0, str(PROJECT_ROOT))
+    from builder.pipeline import prepare_ps5_install_src
+
+    patched = prepare_ps5_install_src(romfs_src, tmp_path)
+    txt = patched.read_text(encoding="utf-8")
+    assert 'strncmp(overlays[i].name, "Mals/", 5)' in txt
+    assert "strcmp(overlays[i].name, restbl_rel)" in txt
