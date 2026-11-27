@@ -169,12 +169,12 @@ def _parse_images(rec: dict) -> tuple[str, str, list[str]]:
     return thumb, full, gallery
 
 
-def search_mods(query: str = "", page: int = 1, sort: str = "default", category: str = "all") -> list[GBMod]:
+def search_mods(query: str = "", page: int = 1, sort: str = "default", category: str = "all", max_pages: int = 3) -> list[GBMod]:
     """Search or browse Tears of the Kingdom mods on GameBanana (API v11)."""
     q_clean = query.strip()
     out: list[GBMod] = []
     seen: set[tuple[int, bool]] = set()
-    pages_to_fetch = 2 if category != "all" else 1
+    pages_to_fetch = max(1, max_pages)
     for p in range(max(1, page), max(1, page) + pages_to_fetch):
         if q_clean:
             params = [

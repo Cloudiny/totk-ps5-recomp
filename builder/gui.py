@@ -25,6 +25,7 @@ from .gamebanana import (
     fetch_image_bytes,
     fetch_mod_detail,
     fetch_mod_files,
+    match_category,
     search_mods,
 )
 from .pipeline import TITLE_ID, default_kit_paths
@@ -255,6 +256,19 @@ def _pick_font(root: tk.Tk) -> str:
     return "Sans"
 
 
+def _pick_serif_font(root: tk.Tk) -> str:
+    try:
+        from tkinter import font as tkfont
+
+        fams = set(tkfont.families(root))
+        for cand in ("Georgia", "Noto Serif", "Liberation Serif", "DejaVu Serif", "Times New Roman"):
+            if cand in fams:
+                return cand
+    except Exception:
+        pass
+    return "Serif"
+
+
 def _load_logo(icon_path: Path, size: int = 52) -> tk.PhotoImage | None:
     if not icon_path.is_file():
         return None
@@ -354,6 +368,7 @@ def run_gui() -> int:
     root.configure(bg=C_BG)
 
     ui_font = _pick_font(root)
+    serif_font = _pick_serif_font(root)
     mono_font = "JetBrains Mono" if ui_font == "Inter" else "Monospace"
 
     style = ttk.Style()
@@ -504,6 +519,11 @@ def run_gui() -> int:
                 w.configure(text=f"  ·  {val}")  # type: ignore[attr-defined]
             else:
                 w.configure(text=val)  # type: ignore[attr-defined]
+        try:
+            _refresh_cat_pills()
+            _update_installed_tab_label()
+        except Exception:
+            pass
 
     btn_es.bind("<ButtonRelease-1>", lambda _e: apply_language("es"))
     btn_en.bind("<ButtonRelease-1>", lambda _e: apply_language("en"))
@@ -536,8 +556,13 @@ def run_gui() -> int:
             n["tl"].configure(bg=bg_c, fg=C_TEXT if active else C_MUTED)
             n["sl"].configure(bg=bg_c, fg=C_MUTED if active else C_DIM)
             _draw_ps_symbol(n["cv"], n["shape"], n["color"] if active else C_DIM, bg_c)
-        if key == "mods" and not gb_results:
-            root.after(50, _run_gb_search)
+        if key == "mods":
+            dock.pack_forget()
+            if not gb_all_results:
+                root.after(50, _run_gb_search)
+        else:
+            if not dock.winfo_manager():
+                dock.pack(side="bottom", fill="x")
 
     for key, shape, color, tk_key, sk_key in nav_specs:
         row = tk.Frame(sidebar, bg=C_SIDEBAR, cursor="hand2")
@@ -672,56 +697,18 @@ def run_gui() -> int:
         bind_tr(tk.Label(cell, bg=C_CARD, fg=C_DIM, font=(ui_font, 8, "bold"), anchor="w"), k_lbl).pack(fill="x", pady=(0, 3))
         ttk.Combobox(cell, textvariable=vars_map[vkey], values=vals, width=w, state="readonly", style="Dark.TCombobox").pack()
 
-    # ================ PAGE 2: MODS & GAMEBANANA (OOT-DIN STYLE) ================
+    # ================ PAGE 2: MODS & GAMEBANANA (EDITORIAL TOTK EDITION) ================
     p_mods = tk.Frame(page_host, bg=C_BG)
     pages["mods"] = p_mods
 
-    mods_hdr = tk.Frame(p_mods, bg=C_BG)
-    mods_hdr.pack(fill="x", pady=(0, 6))
-    mods_hdr_l = tk.Frame(mods_hdr, bg=C_BG)
-    mods_hdr_l.pack(side="left", fill="x", expand=True)
-    bind_tr(tk.Label(mods_hdr_l, bg=C_BG, fg=C_TEXT, font=(ui_font, 15, "bold"), anchor="w"), "p_mods_h").pack(fill="x")
-    bind_tr(tk.Label(mods_hdr_l, bg=C_BG, fg=C_MUTED, font=(ui_font, 9), anchor="w"), "p_mods_s").pack(fill="x", pady=(2, 0))
-
-    # Sub-tab switcher: Browse GameBanana | Installed on PS5 & Local Queue
-    mods_sub_bar = tk.Frame(p_mods, bg=C_BG)
-    mods_sub_bar.pack(fill="x", pady=(0, 8))
-    mods_sub_stack = tk.Frame(p_mods, bg=C_BG)
-    mods_sub_stack.pack(fill="both", expand=True)
-
-    p_gb_browse = tk.Frame(mods_sub_stack, bg=C_BG)
-    p_gb_installed = tk.Frame(mods_sub_stack, bg=C_BG)
-
-    sub_btns: dict[str, ModernButton] = {}
-
-    def _select_mods_sub(which: str) -> None:
-        for k_sub, frm in (("browse", p_gb_browse), ("installed", p_gb_installed)):
-            frm.pack_forget()
-            if k_sub == which:
-                frm.pack(fill="both", expand=True)
-        for k_sub, btn in sub_btns.items():
-            if k_sub == which:
-                btn.set_palette(C_ACCENT, C_ACCENT_HOV, C_ACCENT_TXT, C_ACCENT)
-            else:
-                btn.set_palette(C_CARD_ALT, C_BORDER, C_MUTED, C_BORDER)
-
-    b_sub_browse = ModernButton(mods_sub_bar, tr("tab_gb_browse"), lambda: _select_mods_sub("browse"), font_spec=(ui_font, 9, "bold"), padx=12, pady=5)
-    bind_tr(b_sub_browse, "tab_gb_browse", mode="modern")
-    b_sub_browse.pack(side="left", padx=(0, 8))
-    sub_btns["browse"] = b_sub_browse
-
-    b_sub_inst = ModernButton(mods_sub_bar, tr("tab_gb_installed"), lambda: _select_mods_sub("installed"), font_spec=(ui_font, 9, "bold"), padx=12, pady=5)
-    bind_tr(b_sub_inst, "tab_gb_installed", mode="modern")
-    b_sub_inst.pack(side="left")
-    sub_btns["installed"] = b_sub_inst
-
-    # Console log queue declared early so GameBanana & Artwork actions can stream live logs
+    # Console log queue & shared PS5 connection state
     q: queue.Queue[str | None] = queue.Queue()
+    ps5_connected = [False]
+    ps5_mods_count = [0]
+    gb_all_results: list[GBMod] = []
     gb_results: list[GBMod] = []
-    gb_selected: list[GBMod | None] = [None]
     gb_detail_cache: dict[tuple[int, bool], GBModDetail] = {}
     gb_photo_cache: dict[str, ImageTk.PhotoImage] = {}
-    gb_card_frames: list[tuple[tk.Frame, list[tk.Widget], GBMod]] = []
     gb_search_seq = [0]
 
     def _bytes_to_tk_photo(raw: bytes | None, size: tuple[int, int]) -> ImageTk.PhotoImage | None:
@@ -738,61 +725,228 @@ def run_gui() -> int:
         except Exception:
             return None
 
-    # ---- SUB-PAGE 0: GAMEBANANA 2-PANE BROWSER ----
-    c_gb_top = tk.Frame(p_gb_browse, bg=C_CARD, highlightbackground=C_BORDER, highlightthickness=1)
-    c_gb_top.pack(fill="x", pady=(0, 8))
-    gb_bar = tk.Frame(c_gb_top, bg=C_CARD)
-    gb_bar.pack(fill="x", padx=10, pady=(8, 6))
-    gb_ent_wrap = tk.Frame(gb_bar, bg=C_BORDER, padx=1, pady=1)
-    gb_ent_wrap.pack(side="left", fill="x", expand=True, padx=(0, 8))
+    def _update_installed_tab_label() -> None:
+        is_es = lang_code[0] == "es"
+        base = "Tus Mods" if is_es else "Your Mods"
+        local_n = 0
+        try:
+            local_n = mods_list.size()
+        except Exception:
+            pass
+        b_sub_inst.set_text(f"📦  {base} ({ps5_mods_count[0]}/{local_n})")
+
+    def _open_ps5_connect_modal(startup: bool = False, on_connected=None) -> None:
+        dlg = tk.Toplevel(root)
+        is_es = lang_code[0] == "es"
+        dlg.title("Conectar a PS5 (ftpsrv)" if is_es else "Connect to PS5 (ftpsrv)")
+        dlg.configure(bg=C_BG)
+        dlg.geometry("460x285")
+        dlg.transient(root)
+        dlg.grab_set()
+
+        card = tk.Frame(dlg, bg=C_CARD, highlightbackground=C_ACCENT, highlightthickness=1, padx=20, pady=18)
+        card.pack(fill="both", expand=True, padx=14, pady=14)
+        tk.Label(
+            card,
+            text="Conectar a tu PS5" if is_es else "Connect to your PS5",
+            bg=C_CARD,
+            fg=C_TEXT,
+            font=(serif_font, 15, "bold"),
+            anchor="w",
+        ).pack(fill="x")
+        tk.Label(
+            card,
+            text=(
+                "Abre ftpsrv en tu PS5 para consultar e instalar mods directamente."
+                if is_es
+                else "Start ftpsrv on your PS5 to browse and install mods directly."
+            ),
+            bg=C_CARD,
+            fg=C_MUTED,
+            font=(ui_font, 9),
+            anchor="w",
+            wraplength=390,
+            justify="left",
+        ).pack(fill="x", pady=(4, 14))
+
+        row = tk.Frame(card, bg=C_CARD)
+        row.pack(fill="x", pady=(0, 10))
+        tk.Label(row, text="IP PS5:", bg=C_CARD, fg=C_GOLD, font=(ui_font, 9, "bold")).pack(side="left", padx=(0, 8))
+        ip_w = tk.Frame(row, bg=C_BORDER, padx=1, pady=1)
+        ip_w.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        ip_e = tk.Entry(ip_w, textvariable=vars_map["ftp_host"], bg=C_INPUT, fg=C_TEXT, insertbackground=C_ACCENT, relief="flat", font=(ui_font, 10))
+        ip_e.pack(fill="x", ipady=5, padx=8)
+        tk.Label(row, text="Port:", bg=C_CARD, fg=C_MUTED, font=(ui_font, 9, "bold")).pack(side="left", padx=(0, 6))
+        pt_w = tk.Frame(row, bg=C_BORDER, padx=1, pady=1)
+        pt_w.pack(side="left")
+        tk.Entry(pt_w, textvariable=vars_map["ftp_port"], width=6, bg=C_INPUT, fg=C_TEXT, insertbackground=C_ACCENT, relief="flat", font=(ui_font, 10)).pack(ipady=5, padx=6)
+
+        msg_lbl = tk.Label(card, text="", bg=C_CARD, fg=C_DANGER, font=(ui_font, 8, "bold"), anchor="w")
+        msg_lbl.pack(fill="x", pady=(0, 10))
+
+        btns = tk.Frame(card, bg=C_CARD)
+        btns.pack(fill="x", side="bottom")
+
+        def _try_connect() -> None:
+            host = vars_map["ftp_host"].get().strip()
+            if not host:
+                msg_lbl.configure(text="Ingresa la IP local de tu PS5." if is_es else "Enter your PS5 local IP.", fg=C_DANGER)
+                return
+            port = int(vars_map["ftp_port"].get().strip() or "2121")
+            msg_lbl.configure(text="Conectando..." if is_es else "Connecting...", fg=C_GOLD)
+
+            def worker() -> None:
+                try:
+                    dep = PS5Deployer(host, port, timeout=6, log_fn=lambda m: q.put(m + "\n"))
+                    try:
+                        dirs = dep.list_dirs("/data/totk-ps5/mods")
+                    finally:
+                        dep.close()
+
+                    def _ok() -> None:
+                        ps5_connected[0] = True
+                        ps5_mods_count[0] = len(dirs)
+                        try:
+                            ps5_mods_list.delete(0, "end")
+                            for dn in dirs:
+                                ps5_mods_list.insert("end", dn)
+                        except Exception:
+                            pass
+                        _update_installed_tab_label()
+                        status_dot.configure(text=f"●  PS5 Conectada ({host})" if is_es else f"●  PS5 Connected ({host})", fg=C_ACCENT)
+                        if dlg.winfo_exists():
+                            dlg.destroy()
+                        if on_connected:
+                            on_connected()
+
+                    root.after(0, _ok)
+                except Exception as exc:
+                    root.after(0, lambda e=str(exc): dlg.winfo_exists() and msg_lbl.configure(text=f"Error: {e[:55]}", fg=C_DANGER))
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        ip_e.bind("<Return>", lambda _e: _try_connect())
+        ModernButton(
+            btns,
+            ("Continuar sin PS5" if startup else tr("btn_cancel")) if is_es else ("Continue Offline" if startup else tr("btn_cancel")),
+            dlg.destroy,
+            padx=12,
+            pady=6,
+        ).pack(side="right")
+        ModernButton(
+            btns,
+            "🔌  Conectar" if is_es else "🔌  Connect",
+            _try_connect,
+            bg=C_ACCENT,
+            hover_bg=C_ACCENT_HOV,
+            fg=C_ACCENT_TXT,
+            border=C_ACCENT,
+            padx=14,
+            pady=6,
+        ).pack(side="right", padx=(0, 8))
+        ip_e.focus_set()
+
+    # Top Editorial Header (TOTK Serif + Subtitle + Search on right)
+    mods_hdr = tk.Frame(p_mods, bg=C_BG)
+    mods_hdr.pack(fill="x", pady=(0, 8))
+    mods_hdr_l = tk.Frame(mods_hdr, bg=C_BG)
+    mods_hdr_l.pack(side="left", fill="x", expand=True)
+    bind_tr(tk.Label(mods_hdr_l, bg=C_BG, fg=C_GOLD, font=(serif_font, 9, "italic"), anchor="w"), "p_mods_s").pack(fill="x")
+    tk.Label(
+        mods_hdr_l,
+        text="Mods · Tears of the Kingdom",
+        bg=C_BG,
+        fg=C_TEXT,
+        font=(serif_font, 19, "bold"),
+        anchor="w",
+    ).pack(fill="x")
+
+    # Right-aligned sleek search + sort
+    search_box = tk.Frame(mods_hdr, bg=C_BG)
+    search_box.pack(side="right", anchor="s")
+    gb_ent_wrap = tk.Frame(search_box, bg=C_BORDER, padx=1, pady=1)
+    gb_ent_wrap.pack(side="left", padx=(0, 6))
     gb_ent = tk.Entry(
-        gb_ent_wrap, textvariable=vars_map["gb_query"], bg=C_INPUT, fg=C_TEXT, insertbackground=C_ACCENT, relief="flat", font=(ui_font, 9)
+        gb_ent_wrap, textvariable=vars_map["gb_query"], width=22, bg=C_INPUT, fg=C_TEXT, insertbackground=C_ACCENT, relief="flat", font=(ui_font, 9)
     )
-    gb_ent.pack(fill="x", ipady=4, padx=6)
-    gb_ent.bind("<FocusIn>", lambda _e: gb_ent_wrap.configure(bg=C_ACCENT))
+    gb_ent.pack(ipady=5, padx=8)
+    gb_ent.bind("<FocusIn>", lambda _e: gb_ent_wrap.configure(bg=C_GOLD))
     gb_ent.bind("<FocusOut>", lambda _e: gb_ent_wrap.configure(bg=C_BORDER))
 
     ttk.Combobox(
-        gb_bar, textvariable=vars_map["gb_sort"], values=("default", "new", "updated"), width=9, state="readonly", style="Dark.TCombobox"
-    ).pack(side="left", padx=(0, 8))
+        search_box, textvariable=vars_map["gb_sort"], values=("default", "new", "updated"), width=8, state="readonly", style="Dark.TCombobox"
+    ).pack(side="left", padx=(0, 6))
 
-    # Category filter pill row (All / Gameplay / Skins / UI / Audio / Other)
-    gb_cat_bar = tk.Frame(c_gb_top, bg=C_CARD)
-    gb_cat_bar.pack(fill="x", padx=10, pady=(0, 8))
+    # Sub-tabs row + Category pills with live counts
+    mods_sub_bar = tk.Frame(p_mods, bg=C_BG)
+    mods_sub_bar.pack(fill="x", pady=(0, 6))
+    mods_sub_stack = tk.Frame(p_mods, bg=C_BG)
+    mods_sub_stack.pack(fill="both", expand=True)
+
+    p_gb_browse = tk.Frame(mods_sub_stack, bg=C_BG)
+    p_gb_installed = tk.Frame(mods_sub_stack, bg=C_BG)
+
+    sub_btns: dict[str, ModernButton] = {}
+
+    def _select_mods_sub(which: str) -> None:
+        for k_sub, frm in (("browse", p_gb_browse), ("installed", p_gb_installed)):
+            frm.pack_forget()
+            if k_sub == which:
+                frm.pack(fill="both", expand=True)
+        for k_sub, btn in sub_btns.items():
+            if k_sub == which:
+                btn.set_palette("#1F2A3C", "#29374F", C_GOLD, C_GOLD)
+            else:
+                btn.set_palette(C_BG, C_CARD, C_MUTED, C_BG)
+
+    b_sub_browse = ModernButton(mods_sub_bar, tr("tab_gb_browse"), lambda: _select_mods_sub("browse"), font_spec=(ui_font, 9, "bold"), padx=12, pady=4)
+    bind_tr(b_sub_browse, "tab_gb_browse", mode="modern")
+    b_sub_browse.pack(side="left", padx=(0, 8))
+    sub_btns["browse"] = b_sub_browse
+
+    b_sub_inst = ModernButton(mods_sub_bar, tr("tab_gb_installed"), lambda: _select_mods_sub("installed"), font_spec=(ui_font, 9, "bold"), padx=12, pady=4)
+    b_sub_inst.pack(side="left", padx=(0, 10))
+    sub_btns["installed"] = b_sub_inst
+
+    b_ps5_pill = ModernButton(
+        mods_sub_bar,
+        "🔌  PS5 FTP",
+        lambda: _open_ps5_connect_modal(startup=False),
+        bg=C_CARD,
+        hover_bg=C_CARD_ALT,
+        fg=C_BLUE,
+        border=C_BORDER,
+        font_spec=(ui_font, 8, "bold"),
+        padx=10,
+        pady=4,
+    )
+    b_ps5_pill.pack(side="right")
+
+    # Category bar with live counts (Todos (N), Gameplay (N), ...)
+    gb_cat_bar = tk.Frame(p_gb_browse, bg=C_BG)
+    gb_cat_bar.pack(fill="x", pady=(0, 6))
     cat_btns: dict[str, ModernButton] = {}
 
     def _refresh_cat_pills() -> None:
         cur = vars_map["gb_cat"].get()
         is_es = lang_code[0] == "es"
         for key_c, es_l, en_l in GB_CATEGORIES:
+            cnt = sum(1 for m in gb_all_results if match_category(m, key_c)) if gb_all_results else 0
+            label = f"{es_l if is_es else en_l} ({cnt})" if gb_all_results else (es_l if is_es else en_l)
             btn = cat_btns[key_c]
-            btn.set_text(es_l if is_es else en_l)
+            btn.set_text(label)
             if key_c == cur:
-                btn.set_palette(C_BLUE, C_BLUE_HOV, "#05131C", C_BLUE)
+                btn.set_palette("#1F2937", "#293548", C_GOLD, C_GOLD)
             else:
-                btn.set_palette(C_CARD_ALT, C_BORDER, C_MUTED, C_BORDER)
+                btn.set_palette(C_BG, C_CARD, C_MUTED, C_BG)
 
-    def _pick_cat(cat_key: str) -> None:
-        vars_map["gb_cat"].set(cat_key)
-        _refresh_cat_pills()
-        _run_gb_search()
+    # 2-Column Editorial Scrollable Grid (no boxy WinForms borders!)
+    gb_list_outer = tk.Frame(p_gb_browse, bg=C_BG)
+    gb_list_outer.pack(fill="both", expand=True)
 
-    for key_c, es_l, _en_l in GB_CATEGORIES:
-        cb = ModernButton(gb_cat_bar, es_l, lambda ck=key_c: _pick_cat(ck), font_spec=(ui_font, 8, "bold"), padx=10, pady=3)
-        cb.pack(side="left", padx=(0, 6))
-        cat_btns[key_c] = cb
-    _refresh_cat_pills()
-
-    # 2-Pane Split: Left scrollable mod cards | Right rich preview
-    gb_split = tk.Frame(p_gb_browse, bg=C_BG)
-    gb_split.pack(fill="both", expand=True)
-
-    gb_left_box = tk.Frame(gb_split, bg=C_INPUT, highlightbackground=C_BORDER, highlightthickness=1)
-    gb_left_box.pack(side="left", fill="both", expand=True, padx=(0, 8))
-
-    gb_canvas = tk.Canvas(gb_left_box, bg=C_INPUT, highlightthickness=0, bd=0)
-    gb_scroll = ttk.Scrollbar(gb_left_box, orient="vertical", command=gb_canvas.yview)
-    gb_cards_host = tk.Frame(gb_canvas, bg=C_INPUT)
+    gb_canvas = tk.Canvas(gb_list_outer, bg=C_BG, highlightthickness=0, bd=0)
+    gb_scroll = ttk.Scrollbar(gb_list_outer, orient="vertical", command=gb_canvas.yview)
+    gb_cards_host = tk.Frame(gb_canvas, bg=C_BG)
     gb_cards_host.bind("<Configure>", lambda _e: gb_canvas.configure(scrollregion=gb_canvas.bbox("all")))
     gb_win_id = gb_canvas.create_window((0, 0), window=gb_cards_host, anchor="nw")
     gb_canvas.bind("<Configure>", lambda e: gb_canvas.itemconfigure(gb_win_id, width=e.width))
@@ -808,44 +962,16 @@ def run_gui() -> int:
     gb_canvas.bind("<Button-4>", _on_wheel)
     gb_canvas.bind("<Button-5>", _on_wheel)
 
-    # Right preview pane
-    gb_right_box = tk.Frame(gb_split, bg=C_CARD, width=320, highlightbackground=C_BORDER, highlightthickness=1)
-    gb_right_box.pack(side="right", fill="y")
-    gb_right_box.pack_propagate(False)
-
-    pv_img_lbl = tk.Label(gb_right_box, bg=C_INPUT, fg=C_DIM, text="TOTK PS5", width=36, height=9, font=(ui_font, 9, "bold"))
-    pv_img_lbl.pack(fill="x", padx=10, pady=(10, 8))
-
-    pv_title = tk.Label(gb_right_box, bg=C_CARD, fg=C_TEXT, font=(ui_font, 10, "bold"), anchor="w", justify="left", wraplength=296, text="")
-    pv_title.pack(fill="x", padx=10)
-    pv_meta = tk.Label(gb_right_box, bg=C_CARD, fg=C_GOLD, font=(ui_font, 8, "bold"), anchor="w", justify="left", wraplength=296, text="")
-    pv_meta.pack(fill="x", padx=10, pady=(2, 6))
-
-    pv_desc = tk.Text(
-        gb_right_box,
-        bg=C_INPUT,
-        fg=C_MUTED,
+    # Sleek 1-line status bar at bottom of Mods page
+    mods_foot = tk.Label(
+        p_gb_browse,
+        text="●  GameBanana · Tears of the Kingdom (ID 7617)",
+        bg=C_BG,
+        fg=C_DIM,
         font=(ui_font, 8),
-        relief="flat",
-        wrap="word",
-        height=7,
-        padx=8,
-        pady=6,
-        highlightbackground=C_BORDER,
-        highlightthickness=1,
+        anchor="w",
     )
-    pv_desc.pack(fill="both", expand=True, padx=10, pady=(0, 8))
-    pv_desc.insert("1.0", tr("gb_preview_empty"))
-    pv_desc.configure(state="disabled")
-
-    pv_btns = tk.Frame(gb_right_box, bg=C_CARD)
-    pv_btns.pack(fill="x", padx=10, pady=(0, 10))
-
-    def _set_pv_desc(text: str) -> None:
-        pv_desc.configure(state="normal")
-        pv_desc.delete("1.0", "end")
-        pv_desc.insert("1.0", text)
-        pv_desc.configure(state="disabled")
+    mods_foot.pack(fill="x", pady=(4, 0))
 
     def _choose_file_dialog(mod: GBMod, files: list[GBFile]) -> GBFile | None:
         if len(files) == 1:
@@ -857,7 +983,7 @@ def run_gui() -> int:
         dlg.geometry("560x320")
         dlg.transient(root)
         dlg.grab_set()
-        tk.Label(dlg, text=f"{tr('pick_file_h')}\n{mod.name}", bg=C_CARD, fg=C_TEXT, font=(ui_font, 10, "bold"), justify="left").pack(
+        tk.Label(dlg, text=f"{tr('pick_file_h')}\n{mod.name}", bg=C_CARD, fg=C_TEXT, font=(serif_font, 11, "bold"), justify="left").pack(
             fill="x", padx=16, pady=(14, 8)
         )
         lb = tk.Listbox(dlg, bg=C_INPUT, fg=C_TEXT, selectbackground=C_ACCENT, selectforeground=C_ACCENT_TXT, relief="flat", font=(ui_font, 9))
@@ -881,26 +1007,27 @@ def run_gui() -> int:
         root.wait_window(dlg)
         return picked[0]
 
-    def _download_mod_object(mod: GBMod) -> None:
+    def _download_mod_object(mod: GBMod, chosen_file: GBFile | None = None, auto_push: bool = True) -> None:
+        if auto_push and not ps5_connected[0]:
+            _open_ps5_connect_modal(startup=False, on_connected=lambda: _download_mod_object(mod, chosen_file, auto_push=True))
+            return
+        mods_foot.configure(text=f"⬇  Descargando {mod.name}...", fg=C_GOLD)
         q.put(f">>> Fetching files for GameBanana mod #{mod.mod_id} ({mod.name})...\n")
 
         def worker() -> None:
             try:
-                detail = gb_detail_cache.get((mod.mod_id, mod.wip))
-                files = detail.files if (detail and detail.files) else fetch_mod_files(mod.mod_id, wip=mod.wip)
-                if not files:
-                    q.put("[err] No downloadable files found for this mod.\n")
-                    return
-                chosen_box: list[GBFile | None] = [None]
-                ev = threading.Event()
-
-                def _ask() -> None:
-                    chosen_box[0] = _choose_file_dialog(mod, files)
-                    ev.set()
-
-                root.after(0, _ask)
-                ev.wait()
-                chosen = chosen_box[0]
+                chosen = chosen_file
+                if chosen is None:
+                    detail = gb_detail_cache.get((mod.mod_id, mod.wip))
+                    files = detail.files if (detail and detail.files) else fetch_mod_files(mod.mod_id, wip=mod.wip)
+                    if not files:
+                        root.after(0, lambda: mods_foot.configure(text="✖  Este mod no tiene archivos descargables.", fg=C_DANGER))
+                        return
+                    chosen_box: list[GBFile | None] = [None]
+                    ev = threading.Event()
+                    root.after(0, lambda: (chosen_box.__setitem__(0, _choose_file_dialog(mod, files)), ev.set()))
+                    ev.wait()
+                    chosen = chosen_box[0]
                 if not chosen:
                     return
                 mods_root = Path(vars_map["out"].get().strip() or str(Path.home() / "TOTK-PS5-Out")) / "data_totk_ps5" / "mods"
@@ -908,106 +1035,187 @@ def run_gui() -> int:
                 for w in warns:
                     q.put(f"[warn] {w}\n")
 
-                def _add() -> None:
+                def _after_stage() -> None:
                     existing = [mods_list.get(i) for i in range(mods_list.size())]
                     if str(staged_dir) not in existing:
                         mods_list.insert("end", str(staged_dir))
+                    _update_installed_tab_label()
+                    mods_foot.configure(text=f"✔  {mod.name} listo en cola.", fg=C_ACCENT)
 
-                root.after(0, _add)
+                root.after(0, _after_stage)
+                if auto_push and ps5_connected[0]:
+                    host = vars_map["ftp_host"].get().strip()
+                    port = int(vars_map["ftp_port"].get().strip() or "2121")
+                    root.after(0, lambda: mods_foot.configure(text=f"▲  Instalando {staged_dir.name} en PS5...", fg=C_BLUE))
+                    dep = PS5Deployer(host, port, log_fn=lambda m: q.put(m + "\n"))
+                    try:
+                        dep.mkdir_p(f"/data/totk-ps5/mods/{staged_dir.name}")
+                        dep.chmod_777(f"/data/totk-ps5/mods/{staged_dir.name}")
+                        dep.upload_dir(staged_dir, f"/data/totk-ps5/mods/{staged_dir.name}")
+                        dirs = dep.list_dirs("/data/totk-ps5/mods")
+                    finally:
+                        dep.close()
+
+                    def _done_ps5() -> None:
+                        ps5_mods_count[0] = len(dirs)
+                        ps5_mods_list.delete(0, "end")
+                        for dn in dirs:
+                            ps5_mods_list.insert("end", dn)
+                        _update_installed_tab_label()
+                        mods_foot.configure(text=f"✔  {mod.name} instalado en PS5 (/data/totk-ps5/mods/).", fg=C_ACCENT)
+
+                    root.after(0, _done_ps5)
             except Exception as exc:
                 q.put(f"[err] GameBanana download failed: {exc}\n")
+                root.after(0, lambda e=str(exc): mods_foot.configure(text=f"✖  Error: {e[:70]}", fg=C_DANGER))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _run_gb_download() -> None:
-        mod = gb_selected[0]
-        if mod is not None:
-            _download_mod_object(mod)
+    def _open_zoom_lightbox(urls: list[str], start_idx: int = 0) -> None:
+        if not urls:
+            return
+        z = tk.Toplevel(root)
+        z.title("Vista previa")
+        z.configure(bg="#05070B")
+        z.geometry("920x600")
+        z.transient(root)
+        z.grab_set()
+        lbl = tk.Label(z, bg="#05070B", fg=C_DIM, text="Cargando imagen...", font=(ui_font, 10))
+        lbl.pack(fill="both", expand=True, padx=16, pady=12)
+        nav = tk.Frame(z, bg="#05070B")
+        nav.pack(fill="x", padx=16, pady=(0, 12))
+        idx_box = [start_idx]
+
+        def _load_idx(i: int) -> None:
+            idx_box[0] = i % len(urls)
+            u = urls[idx_box[0]]
+            lbl.configure(image="", text="Cargando...")
+
+            def _w() -> None:
+                ph = _bytes_to_tk_photo(fetch_image_bytes(u, timeout=8), (860, 500))
+                if ph is not None:
+                    root.after(0, lambda: z.winfo_exists() and (lbl.configure(image=ph, text=""), setattr(lbl, "image", ph)))
+
+            threading.Thread(target=_w, daemon=True).start()
+
+        if len(urls) > 1:
+            ModernButton(nav, tr("btn_prev_img"), lambda: _load_idx(idx_box[0] - 1), padx=10, pady=4).pack(side="left", padx=(0, 6))
+            ModernButton(nav, tr("btn_next_img"), lambda: _load_idx(idx_box[0] + 1), padx=10, pady=4).pack(side="left")
+        ModernButton(nav, tr("btn_cancel"), z.destroy, padx=12, pady=4).pack(side="right")
+        _load_idx(start_idx)
 
     def _open_mod_detail_modal(mod: GBMod) -> None:
+        is_es = lang_code[0] == "es"
         dlg = tk.Toplevel(root)
-        dlg.title(f"{mod.name} — GameBanana")
+        dlg.title(f"{mod.name} — Tears of the Kingdom")
         dlg.configure(bg=C_BG)
-        dlg.geometry("760x640")
+        dlg.geometry("760x620")
         dlg.transient(root)
         dlg.grab_set()
 
-        hdr = tk.Frame(dlg, bg=C_CARD, highlightbackground=C_BORDER, highlightthickness=1)
-        hdr.pack(fill="x", padx=14, pady=(14, 10))
-        tk.Label(hdr, text=mod.name, bg=C_CARD, fg=C_TEXT, font=(ui_font, 13, "bold"), anchor="w", wraplength=700).pack(fill="x", padx=14, pady=(10, 2))
+        frame = tk.Frame(dlg, bg="#10151F", highlightbackground=C_GOLD, highlightthickness=1, padx=22, pady=18)
+        frame.pack(fill="both", expand=True, padx=14, pady=14)
+
+        tk.Label(frame, text=mod.name, bg="#10151F", fg=C_TEXT, font=(serif_font, 18, "bold"), anchor="w", wraplength=680).pack(fill="x")
         meta_lbl = tk.Label(
-            hdr,
-            text=f"[{mod.category}]  ·  by {mod.author}  ·  ★ {mod.likes}",
-            bg=C_CARD,
-            fg=C_GOLD,
-            font=(ui_font, 9, "bold"),
+            frame,
+            text=f"{mod.author}  ·  {mod.category}  ·  ♥ {mod.likes}  ·  {mod.views:,} {'vistas' if is_es else 'views'}",
+            bg="#10151F",
+            fg=C_MUTED,
+            font=(ui_font, 9),
             anchor="w",
         )
-        meta_lbl.pack(fill="x", padx=14, pady=(0, 10))
+        meta_lbl.pack(fill="x", pady=(3, 10))
 
-        gal_frame = tk.Frame(dlg, bg=C_INPUT, highlightbackground=C_BORDER, highlightthickness=1)
-        gal_frame.pack(fill="x", padx=14, pady=(0, 8))
-        img_lbl = tk.Label(gal_frame, bg=C_INPUT, fg=C_DIM, text=tr("gb_loading_detail"), height=14, font=(ui_font, 9))
-        img_lbl.pack(fill="x", padx=8, pady=8)
+        # File selector combobox right below subtitle (like oot-din Image 2!)
+        file_var = tk.StringVar(value="Cargando archivos..." if is_es else "Loading files...")
+        file_cb = ttk.Combobox(frame, textvariable=file_var, state="readonly", style="Dark.TCombobox")
+        file_cb.pack(fill="x", pady=(0, 12))
+        loaded_files: list[GBFile] = []
+        gallery_urls: list[str] = []
 
-        gal_nav = tk.Frame(dlg, bg=C_BG)
-        gal_nav.pack(fill="x", padx=14, pady=(0, 8))
-        gal_idx = [0]
-        gal_photos: list[ImageTk.PhotoImage] = []
+        # Preview thumbnail + Ampliar vista previa
+        prev_row = tk.Frame(frame, bg="#10151F")
+        prev_row.pack(fill="x", pady=(0, 12))
+        img_lbl = tk.Label(prev_row, bg=C_INPUT, fg=C_DIM, text="...", width=28, height=7, highlightbackground=C_GOLD, highlightthickness=1, cursor="hand2")
+        img_lbl.pack(side="left")
+        ModernButton(
+            prev_row,
+            "🔍  Ampliar vista previa" if is_es else "🔍  Expand preview",
+            lambda: _open_zoom_lightbox(gallery_urls or ([mod.full_img_url] if mod.full_img_url else [])),
+            bg="#10151F",
+            hover_bg=C_CARD_ALT,
+            fg=C_MUTED,
+            border="#10151F",
+            font_spec=(ui_font, 9),
+            padx=14,
+            pady=6,
+        ).pack(side="left", padx=12)
+        img_lbl.bind("<Button-1>", lambda _e: _open_zoom_lightbox(gallery_urls or ([mod.full_img_url] if mod.full_img_url else [])))
 
-        def _show_gal(idx: int) -> None:
-            if not gal_photos:
-                return
-            gal_idx[0] = idx % len(gal_photos)
-            ph = gal_photos[gal_idx[0]]
-            img_lbl.configure(image=ph, text="", height=0)
-            img_lbl.image = ph  # type: ignore[attr-defined]
-
-        ModernButton(gal_nav, tr("btn_prev_img"), lambda: _show_gal(gal_idx[0] - 1), font_spec=(ui_font, 8, "bold"), padx=10, pady=4).pack(side="left", padx=(0, 6))
-        ModernButton(gal_nav, tr("btn_next_img"), lambda: _show_gal(gal_idx[0] + 1), font_spec=(ui_font, 8, "bold"), padx=10, pady=4).pack(side="left")
-
+        # Borderless editorial description
         desc_box = scrolledtext.ScrolledText(
-            dlg,
-            bg=C_INPUT,
-            fg=C_TEXT,
-            font=(ui_font, 9),
+            frame,
+            bg="#10151F",
+            fg="#E2E8F0",
+            font=(ui_font, 10),
             relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
             wrap="word",
             height=11,
-            padx=12,
-            pady=10,
-            highlightbackground=C_BORDER,
-            highlightthickness=1,
+            padx=2,
+            pady=4,
         )
-        desc_box.pack(fill="both", expand=True, padx=14, pady=(0, 10))
+        desc_box.pack(fill="both", expand=True, pady=(0, 12))
         desc_box.insert("1.0", tr("gb_loading_detail"))
         desc_box.configure(state="disabled")
 
-        foot = tk.Frame(dlg, bg=C_BG)
-        foot.pack(fill="x", padx=14, pady=(0, 14))
-        ModernButton(foot, tr("btn_cancel"), dlg.destroy, padx=12, pady=6).pack(side="right")
+        foot = tk.Frame(frame, bg="#10151F")
+        foot.pack(fill="x")
+
+        def _install_from_modal() -> None:
+            chosen = None
+            idx_f = file_cb.current()
+            if loaded_files and 0 <= idx_f < len(loaded_files):
+                chosen = loaded_files[idx_f]
+            dlg.destroy()
+            _download_mod_object(mod, chosen_file=chosen, auto_push=True)
+
         ModernButton(
             foot,
-            tr("btn_gb_dl"),
-            lambda: (dlg.destroy(), _download_mod_object(mod)),
-            bg=C_ACCENT,
-            hover_bg=C_ACCENT_HOV,
-            fg=C_ACCENT_TXT,
-            border=C_ACCENT,
-            padx=14,
-            pady=6,
+            "⬇  Instalar en PS5" if is_es else "⬇  Install to PS5",
+            _install_from_modal,
+            bg=C_GOLD,
+            hover_bg="#F5D782",
+            fg="#1A1405",
+            border=C_GOLD,
+            font_spec=(ui_font, 9, "bold"),
+            padx=18,
+            pady=7,
+        ).pack(side="right")
+        ModernButton(
+            foot,
+            "Ver página" if is_es else "Open web",
+            lambda: webbrowser.open(mod.profile_url),
+            bg="#10151F",
+            hover_bg=C_CARD_ALT,
+            fg=C_MUTED,
+            border="#10151F",
+            padx=12,
+            pady=7,
         ).pack(side="right", padx=(0, 8))
         ModernButton(
             foot,
-            tr("btn_gb_open"),
-            lambda: webbrowser.open(mod.profile_url),
-            bg=C_CARD_ALT,
-            hover_bg=C_BORDER,
-            fg=C_BLUE,
-            border=C_BORDER,
+            "Cerrar" if is_es else "Close",
+            dlg.destroy,
+            bg="#10151F",
+            hover_bg=C_CARD_ALT,
+            fg=C_MUTED,
+            border="#10151F",
             padx=12,
-            pady=6,
-        ).pack(side="left")
+            pady=7,
+        ).pack(side="right", padx=(0, 6))
 
         def _load_modal_detail() -> None:
             detail = gb_detail_cache.get((mod.mod_id, mod.wip))
@@ -1019,133 +1227,147 @@ def run_gui() -> int:
                     detail = GBModDetail(mod_id=mod.mod_id, description=mod.summary or "", gallery_urls=[mod.full_img_url] if mod.full_img_url else [])
 
             urls = detail.gallery_urls or ([mod.full_img_url] if mod.full_img_url else ([mod.thumb_url] if mod.thumb_url else []))
-            loaded: list[ImageTk.PhotoImage] = []
-            for u in urls[:4]:
-                ph = _bytes_to_tk_photo(fetch_image_bytes(u, timeout=6), (520, 260))
-                if ph is not None:
-                    loaded.append(ph)
+            ph = _bytes_to_tk_photo(fetch_image_bytes(urls[0], timeout=6), (200, 112)) if urls else None
 
             def _apply() -> None:
                 if not dlg.winfo_exists():
                     return
+                gallery_urls.clear()
+                gallery_urls.extend(urls)
+                loaded_files.clear()
+                loaded_files.extend(detail.files)
+                if loaded_files:
+                    file_cb.configure(values=[f"{f.filename} ({f.size_bytes / (1024 * 1024):.1f} MB)" for f in loaded_files])
+                    file_cb.current(0)
+                else:
+                    file_var.set("Sin archivos descargables" if is_es else "No downloadable files")
                 meta_lbl.configure(
-                    text=f"[{detail.category or mod.category}]  ·  by {detail.author or mod.author}  ·  ★ {detail.likes or mod.likes}  ·  👁 {detail.views or mod.views}"
+                    text=f"{detail.author or mod.author}  ·  {detail.category or mod.category}  ·  ♥ {detail.likes or mod.likes}  ·  {(detail.views or mod.views):,} {'vistas' if is_es else 'views'}"
                 )
                 desc_box.configure(state="normal")
                 desc_box.delete("1.0", "end")
                 desc_box.insert("1.0", detail.description or mod.summary or tr("gb_no_desc"))
                 desc_box.configure(state="disabled")
-                if loaded:
-                    gal_photos.clear()
-                    gal_photos.extend(loaded)
-                    _show_gal(0)
+                if ph is not None:
+                    img_lbl.configure(image=ph, text="", width=200, height=112)
+                    img_lbl.image = ph  # type: ignore[attr-defined]
                 else:
-                    img_lbl.configure(text=mod.name)
+                    img_lbl.configure(text=mod.name[:20])
 
             root.after(0, _apply)
 
         threading.Thread(target=_load_modal_detail, daemon=True).start()
 
-    def _select_mod_card(mod: GBMod) -> None:
-        gb_selected[0] = mod
-        for frm, widgets, m_item in gb_card_frames:
-            is_sel = m_item.mod_id == mod.mod_id and m_item.wip == mod.wip
-            bg_c = C_CARD_ALT if is_sel else C_CARD
-            bd_c = C_ACCENT if is_sel else C_BORDER
-            frm.configure(bg=bg_c, highlightbackground=bd_c)
-            for w in widgets:
-                w.configure(bg=bg_c)
-
-        pv_title.configure(text=mod.name)
-        pv_meta.configure(text=f"[{mod.category}]  ·  by {mod.author}  ·  ★ {mod.likes}")
-        _set_pv_desc(tr("gb_loading_detail"))
-        pv_img_lbl.configure(image="", text="...", height=9)
-
-        def _load_pv() -> None:
-            detail = gb_detail_cache.get((mod.mod_id, mod.wip))
-            if detail is None:
-                try:
-                    detail = fetch_mod_detail(mod.mod_id, wip=mod.wip)
-                    gb_detail_cache[(mod.mod_id, mod.wip)] = detail
-                except Exception:
-                    detail = GBModDetail(mod_id=mod.mod_id, description=mod.summary or "")
-            img_url = mod.full_img_url or (detail.gallery_urls[0] if detail.gallery_urls else mod.thumb_url)
-            ph = _bytes_to_tk_photo(fetch_image_bytes(img_url, timeout=5), (292, 160)) if img_url else None
-
-            def _apply_pv() -> None:
-                if gb_selected[0] is None or gb_selected[0].mod_id != mod.mod_id:
-                    return
-                if ph is not None:
-                    pv_img_lbl.configure(image=ph, text="", height=0)
-                    pv_img_lbl.image = ph  # type: ignore[attr-defined]
-                else:
-                    pv_img_lbl.configure(image="", text=mod.name[:28], height=9)
-                _set_pv_desc(detail.description or mod.summary or tr("gb_no_desc"))
-
-            root.after(0, _apply_pv)
-
-        threading.Thread(target=_load_pv, daemon=True).start()
-
     def _render_gb_cards(mods: list[GBMod], seq: int) -> None:
-        gb_card_frames.clear()
+        gb_results.clear()
+        gb_results.extend(mods)
         for child in gb_cards_host.winfo_children():
             child.destroy()
+
+        gb_cards_host.columnconfigure(0, weight=1, uniform="gbcol")
+        gb_cards_host.columnconfigure(1, weight=1, uniform="gbcol")
+        is_es = lang_code[0] == "es"
+
         for idx, m in enumerate(mods):
-            card = tk.Frame(gb_cards_host, bg=C_CARD, highlightbackground=C_BORDER, highlightthickness=1, cursor="hand2")
-            card.pack(fill="x", padx=6, pady=(6 if idx == 0 else 0, 6))
+            r_idx, c_idx = divmod(idx, 2)
+            cell = tk.Frame(gb_cards_host, bg=C_BG, cursor="hand2")
+            cell.grid(row=r_idx, column=c_idx, sticky="nsew", padx=(0 if c_idx == 0 else 10, 10 if c_idx == 0 else 0), pady=0)
 
-            thumb_lbl = tk.Label(card, bg=C_INPUT, fg=C_DIM, text="IMG", width=13, height=3, font=(ui_font, 8, "bold"))
-            thumb_lbl.pack(side="left", padx=8, pady=8)
+            row_f = tk.Frame(cell, bg=C_BG, padx=6, pady=7)
+            row_f.pack(fill="both", expand=True)
+            tk.Frame(cell, bg="#1A2232", height=1).pack(fill="x")
 
-            info = tk.Frame(card, bg=C_CARD)
-            info.pack(side="left", fill="both", expand=True, padx=(0, 8), pady=6)
-            t_lbl = tk.Label(info, text=m.name, bg=C_CARD, fg=C_TEXT, font=(ui_font, 9, "bold"), anchor="w", justify="left", wraplength=330)
+            thumb_lbl = tk.Label(row_f, bg=C_INPUT, fg=C_DIM, text="IMG", width=11, height=3, font=(ui_font, 7, "bold"))
+            thumb_lbl.pack(side="left", padx=(0, 10))
+
+            info = tk.Frame(row_f, bg=C_BG)
+            info.pack(side="left", fill="both", expand=True)
+            t_lbl = tk.Label(info, text=m.name, bg=C_BG, fg=C_TEXT, font=(ui_font, 9, "bold"), anchor="w", justify="left", wraplength=240)
             t_lbl.pack(fill="x")
             m_lbl = tk.Label(
                 info,
-                text=f"[{m.category}]  ·  {m.author}  ·  ★ {m.likes}",
-                bg=C_CARD,
-                fg=C_GOLD,
+                text=f"{m.author}  ·  {m.category}  ·  ★ {m.likes}",
+                bg=C_BG,
+                fg=C_MUTED,
                 font=(ui_font, 8),
                 anchor="w",
             )
             m_lbl.pack(fill="x", pady=(2, 0))
-            if m.summary:
-                s_lbl = tk.Label(info, text=m.summary.replace("\n", " ")[:110], bg=C_CARD, fg=C_MUTED, font=(ui_font, 8), anchor="w", justify="left", wraplength=330)
-                s_lbl.pack(fill="x", pady=(2, 0))
-                widgets_bg = [info, t_lbl, m_lbl, s_lbl]
-            else:
-                widgets_bg = [info, t_lbl, m_lbl]
 
-            gb_card_frames.append((card, widgets_bg, m))
+            inst_lbl = tk.Label(
+                row_f,
+                text="Instalar" if is_es else "Install",
+                bg=C_BG,
+                fg=C_GOLD,
+                font=(ui_font, 8, "bold"),
+                padx=8,
+                cursor="hand2",
+            )
+            inst_lbl.pack(side="right")
 
-            for w in [card, thumb_lbl, *widgets_bg]:
-                w.bind("<Button-1>", lambda _e, mod_obj=m: _select_mod_card(mod_obj))
-                w.bind("<Double-Button-1>", lambda _e, mod_obj=m: (_select_mod_card(mod_obj), _open_mod_detail_modal(mod_obj)))
+            hover_widgets = [row_f, info, t_lbl, m_lbl, inst_lbl]
+
+            def _enter(_e, wlist=hover_widgets) -> None:
+                for w in wlist:
+                    w.configure(bg="#111827")
+
+            def _leave(_e, wlist=hover_widgets) -> None:
+                for w in wlist:
+                    w.configure(bg=C_BG)
+
+            for w in [row_f, thumb_lbl, info, t_lbl, m_lbl]:
+                w.bind("<Enter>", _enter)
+                w.bind("<Leave>", _leave)
+                w.bind("<Button-1>", lambda _e, mod_obj=m: _open_mod_detail_modal(mod_obj))
+                w.bind("<Double-Button-1>", lambda _e, mod_obj=m: _open_mod_detail_modal(mod_obj))
                 w.bind("<MouseWheel>", _on_wheel)
                 w.bind("<Button-4>", _on_wheel)
                 w.bind("<Button-5>", _on_wheel)
 
+            inst_lbl.bind("<Enter>", _enter)
+            inst_lbl.bind("<Leave>", _leave)
+            inst_lbl.bind("<Button-1>", lambda _e, mod_obj=m: _download_mod_object(mod_obj, auto_push=True))
+
             if m.thumb_url:
                 cached_ph = gb_photo_cache.get(m.thumb_url)
                 if cached_ph is not None:
-                    thumb_lbl.configure(image=cached_ph, text="", width=96, height=54)
+                    thumb_lbl.configure(image=cached_ph, text="", width=88, height=50)
                     thumb_lbl.image = cached_ph  # type: ignore[attr-defined]
                 else:
                     def _dl_th(url_t: str = m.thumb_url, lbl: tk.Label = thumb_lbl, my_seq: int = seq) -> None:
-                        ph = _bytes_to_tk_photo(fetch_image_bytes(url_t, timeout=5), (96, 54))
+                        ph = _bytes_to_tk_photo(fetch_image_bytes(url_t, timeout=5), (88, 50))
                         if ph is not None:
                             def _set_th() -> None:
                                 if gb_search_seq[0] == my_seq and lbl.winfo_exists():
                                     gb_photo_cache[url_t] = ph
-                                    lbl.configure(image=ph, text="", width=96, height=54)
+                                    lbl.configure(image=ph, text="", width=88, height=50)
                                     lbl.image = ph  # type: ignore[attr-defined]
                             root.after(0, _set_th)
 
                     threading.Thread(target=_dl_th, daemon=True).start()
 
-        if mods:
-            _select_mod_card(mods[0])
+        mods_foot.configure(
+            text=f"●  {len(mods)} mods mostrados (de {len(gb_all_results)} en GameBanana) · Haz clic en cualquier mod para ver descripción completa y fotos"
+            if is_es
+            else f"●  {len(mods)} mods shown (of {len(gb_all_results)} on GameBanana) · Click any mod for full description & screenshots",
+            fg=C_DIM,
+        )
+
+    def _pick_cat(cat_key: str) -> None:
+        vars_map["gb_cat"].set(cat_key)
+        _refresh_cat_pills()
+        if gb_all_results:
+            filtered = [m for m in gb_all_results if match_category(m, cat_key)]
+            gb_search_seq[0] += 1
+            _render_gb_cards(filtered, gb_search_seq[0])
+        else:
+            _run_gb_search()
+
+    for key_c, es_l, _en_l in GB_CATEGORIES:
+        cb = ModernButton(gb_cat_bar, es_l, lambda ck=key_c: _pick_cat(ck), font_spec=(ui_font, 8, "bold"), padx=10, pady=4)
+        cb.pack(side="left", padx=(0, 6))
+        cat_btns[key_c] = cb
+    _refresh_cat_pills()
 
     def _run_gb_search() -> None:
         query = vars_map["gb_query"].get().strip()
@@ -1153,30 +1375,40 @@ def run_gui() -> int:
         cat_key = vars_map["gb_cat"].get().strip() or "all"
         gb_search_seq[0] += 1
         my_seq = gb_search_seq[0]
+        mods_foot.configure(text="⏳  Buscando mods en GameBanana...", fg=C_GOLD)
         q.put(f">>> GameBanana search: '{query or '(featured)'}' ({sort}, cat={cat_key})\n")
 
         def worker() -> None:
             try:
-                mods = search_mods(query=query, page=1, sort=sort, category=cat_key)
+                mods = search_mods(query=query, page=1, sort=sort, category="all", max_pages=3)
                 if gb_search_seq[0] != my_seq:
                     return
-                gb_results.clear()
-                gb_results.extend(mods)
-                root.after(0, lambda: _render_gb_cards(mods, my_seq))
+                gb_all_results.clear()
+                gb_all_results.extend(mods)
+                filtered = [m for m in mods if match_category(m, cat_key)]
+
+                def _apply() -> None:
+                    _refresh_cat_pills()
+                    _render_gb_cards(filtered, my_seq)
+
+                root.after(0, _apply)
                 q.put(f"[ok] GameBanana returned {len(mods)} TOTK mods.\n")
             except Exception as exc:
                 q.put(f"[err] GameBanana search failed: {exc}\n")
+                root.after(0, lambda e=str(exc): mods_foot.configure(text=f"✖  Error GameBanana: {e[:60]}", fg=C_DANGER))
 
         threading.Thread(target=worker, daemon=True).start()
 
     gb_ent.bind("<Return>", lambda _e: _run_gb_search())
+    b_search = ModernButton(search_box, tr("btn_search"), _run_gb_search, bg=C_ACCENT, hover_bg=C_ACCENT_HOV, fg=C_ACCENT_TXT, border=C_ACCENT, padx=12, pady=5)
+    bind_tr(b_search, "btn_search", mode="modern")
+    b_search.pack(side="left")
 
     def _push_mods_ftp_now() -> None:
-        host = vars_map["ftp_host"].get().strip()
-        if not host:
-            messagebox.showerror(tr("err_no_ip_t"), tr("err_no_ip_m"))
-            select_page("ftp")
+        if not ps5_connected[0]:
+            _open_ps5_connect_modal(startup=False, on_connected=_push_mods_ftp_now)
             return
+        host = vars_map["ftp_host"].get().strip()
         port = int(vars_map["ftp_port"].get().strip() or "2121")
         out_mods = Path(vars_map["out"].get().strip() or str(Path.home() / "TOTK-PS5-Out")) / "data_totk_ps5" / "mods"
         if not out_mods.is_dir():
@@ -1191,64 +1423,15 @@ def run_gui() -> int:
                     dep.mkdir_p("/data/totk-ps5/mods")
                     dep.chmod_777("/data/totk-ps5/mods")
                     n = dep.upload_dir(out_mods, "/data/totk-ps5/mods")
+                    dirs = dep.list_dirs("/data/totk-ps5/mods")
                     q.put(f"[ok] Uploaded {n} mod files to /data/totk-ps5/mods!\n")
+                    root.after(0, lambda: (ps5_mods_count.__setitem__(0, len(dirs)), _update_installed_tab_label()))
                 finally:
                     dep.close()
             except Exception as exc:
                 q.put(f"[err] FTP mod upload failed: {exc}\n")
 
         threading.Thread(target=worker, daemon=True).start()
-
-    b_search = ModernButton(gb_bar, tr("btn_search"), _run_gb_search, bg=C_ACCENT, hover_bg=C_ACCENT_HOV, fg=C_ACCENT_TXT, border=C_ACCENT, padx=12, pady=5)
-    bind_tr(b_search, "btn_search", mode="modern")
-    b_search.pack(side="left")
-
-    b_detail = ModernButton(
-        pv_btns,
-        tr("btn_gb_detail"),
-        lambda: _open_mod_detail_modal(gb_selected[0]) if gb_selected[0] else None,
-        bg=C_CARD_ALT,
-        hover_bg=C_BORDER,
-        fg=C_TEXT,
-        border=C_BORDER,
-        font_spec=(ui_font, 8, "bold"),
-        padx=10,
-        pady=5,
-    )
-    bind_tr(b_detail, "btn_gb_detail", mode="modern")
-    b_detail.pack(fill="x", pady=(0, 6))
-
-    pv_cta_row = tk.Frame(pv_btns, bg=C_CARD)
-    pv_cta_row.pack(fill="x")
-    b_gbdl = ModernButton(
-        pv_cta_row,
-        tr("btn_gb_dl"),
-        _run_gb_download,
-        bg=C_ACCENT,
-        hover_bg=C_ACCENT_HOV,
-        fg=C_ACCENT_TXT,
-        border=C_ACCENT,
-        font_spec=(ui_font, 8, "bold"),
-        padx=8,
-        pady=5,
-    )
-    bind_tr(b_gbdl, "btn_gb_dl", mode="modern")
-    b_gbdl.pack(side="left", fill="x", expand=True, padx=(0, 6))
-
-    b_gbftp = ModernButton(
-        pv_cta_row,
-        tr("btn_gb_ftp"),
-        _push_mods_ftp_now,
-        bg=C_BLUE,
-        hover_bg=C_BLUE_HOV,
-        fg="#05131C",
-        border=C_BLUE,
-        font_spec=(ui_font, 8, "bold"),
-        padx=8,
-        pady=5,
-    )
-    bind_tr(b_gbftp, "btn_gb_ftp", mode="modern")
-    b_gbftp.pack(side="left", fill="x", expand=True)
 
     # ---- SUB-PAGE 1: INSTALLED ON PS5 & LOCAL QUEUE ----
     c_ps5_mods = make_card(p_gb_installed, "c_ps5_mods_t", "c_ps5_mods_s")
@@ -1270,11 +1453,10 @@ def run_gui() -> int:
     ps5_mod_btns.pack(fill="x")
 
     def _refresh_ps5_mods() -> None:
-        host = vars_map["ftp_host"].get().strip()
-        if not host:
-            messagebox.showerror(tr("err_no_ip_t"), tr("err_no_ip_m"))
-            select_page("ftp")
+        if not ps5_connected[0]:
+            _open_ps5_connect_modal(startup=False, on_connected=_refresh_ps5_mods)
             return
+        host = vars_map["ftp_host"].get().strip()
         port = int(vars_map["ftp_port"].get().strip() or "2121")
         q.put(f">>> Listing /data/totk-ps5/mods on ps5://{host}:{port}...\n")
 
@@ -1287,9 +1469,11 @@ def run_gui() -> int:
                     dep.close()
 
                 def _fill() -> None:
+                    ps5_mods_count[0] = len(dirs)
                     ps5_mods_list.delete(0, "end")
                     for d_name in dirs:
                         ps5_mods_list.insert("end", d_name)
+                    _update_installed_tab_label()
 
                 root.after(0, _fill)
                 q.put(f"[ok] Found {len(dirs)} installed mods on PS5.\n")
@@ -1680,6 +1864,7 @@ def run_gui() -> int:
     select_page("build")
     _insert_colored(tr("welcome"))
     root.after(100, pump)
+    root.after(280, lambda: _open_ps5_connect_modal(startup=True))
     root.mainloop()
     return 0
 
