@@ -1,12 +1,31 @@
-LEGAL NOTICE
+LEGAL NOTICE & THIRD-PARTY ATTRIBUTIONS
 
 This repository and its release artifacts contain ZERO copyrighted Nintendo game
 code, assets, shaders, ROM data, or decryption keys. You must supply your own
-legally dumped copy of The Legend of Zelda: Tears of the Kingdom and Switch
-keys to build the PlayStation 5 executable and shader cache.
+legally dumped copy of The Legend of Zelda: Tears of the Kingdom (v1.4.3) and
+Switch prod.keys to build the PlayStation 5 executable and shader cache.
 
 "The Legend of Zelda" and "Nintendo Switch" are trademarks of Nintendo Co., Ltd.
 "PlayStation" and "DualSense" are trademarks of Sony Interactive Entertainment.
 
 This project is an independent, non-commercial community recompilation effort
 with no affiliation to Nintendo or Sony.
+
+--------------------------------------------------------------------------------
+THIRD-PARTY PROJECTS & CREDITS
+--------------------------------------------------------------------------------
+- Upstream TOTK Static Recompilation Runtime & Lifter (`totk-linux-native-recomp`
+  / Savage Wind contributors).
+- MacNativeGames (`totk-shaders`, MIT License) — community shader variant list
+  used for offline PS5 RADV pre-translation.
+- Mesa RADV for PlayStation 5 (`PS5_Vulkan`, `PS5_Longshot_Plus`, and the PS5
+  homebrew Vulkan community) — `libvulkan_radeon.ps5.a`, `ps5-native-tool`, and
+  PS5 FSELF link tooling.
+- OpenOrbis & `ps5-payload-sdk` contributors — PS5 userland headers, stubs, and
+  toolchain wrappers.
+- AMD FidelityFX SDK (MIT License) — FSR 3.1.5 Upscaling & Frame Generation.
+- GPUOpen Vulkan Memory Allocator (VMA, MIT License) & Khronos Vulkan Headers
+  (Apache-2.0).
+- SciresM `hactool` (ISC License) — local user-supplied `.xci`/`.nsp` extraction.
+- `python-build-standalone`, `PyQt6`, `Pillow`, `Capstone`, `NumPy`, `LZ4`,
+  `Zstandard`, `fontTools`, and `libopus`.

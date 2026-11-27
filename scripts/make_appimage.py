@@ -11,18 +11,37 @@ Contains ZERO Nintendo game data:
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import stat
 import subprocess
 import sys
+import tarfile
+import urllib.request
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TOTK_SRC = Path(os.environ.get("TOTK_UPSTREAM_SRC", str(PROJECT_ROOT.parent / "totk-linux-native-recomp")))
 APPDIR = PROJECT_ROOT / "AppDir"
 OUT_APPIMAGE = PROJECT_ROOT / "out" / "PS5TotkBuilder-v0.1.0-linux-x64.AppImage"
+CACHE_DIR = PROJECT_ROOT / ".local" / "builder-downloads"
 APPIMAGETOOL = Path(shutil.which("appimagetool") or (Path.home() / ".local" / "bin" / "appimagetool"))
+
+PYTHON_STANDALONE_URL = (
+    "https://github.com/astral-sh/python-build-standalone/releases/download/20261110/"
+    "cpython-3.13.18+20261110-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+)
+PYTHON_STANDALONE_SHA256 = "f2d2199eb25880e07863b391cf7124e7ffa1338b0d65600dfcec117c4223a7fb"
+BUNDLED_PACKAGES = [
+    "PyQt6==6.12.1",
+    "Pillow>=10.4.0",
+    "capstone==5.0.9",
+    "lz4==4.4.5",
+    "zstandard==0.25.0",
+    "numpy==2.5.4",
+    "fonttools>=4.53.0",
+]
 
 INSTALL_SIDE = {
     "romfs.c",
@@ -39,6 +58,50 @@ def copy_clean_tree(src: Path, dst: Path, ignore_fn=None) -> None:
     if dst.exists():
         shutil.rmtree(dst)
     shutil.copytree(src, dst, symlinks=True, ignore=ignore_fn)
+
+
+def _prepare_standalone_python() -> Path:
+    """Download & cache CPython 3.13 standalone with PyQt6 + all lifter wheels."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    env_dir = CACHE_DIR / "python313-env"
+    marker = env_dir / ".totk_pkgs_ready_v1"
+    if marker.is_file() and (env_dir / "bin" / "python3").is_file():
+        return env_dir
+
+    tar_path = CACHE_DIR / "cpython-3.13-linux-x64.tar.gz"
+    if not tar_path.is_file():
+        print(f"[dl] Fetching CPython 3.13 standalone -> {tar_path}")
+        req = urllib.request.Request(PYTHON_STANDALONE_URL, headers={"User-Agent": "PS5TotkBuilder/0.1"})
+        tmp_dl = tar_path.with_suffix(".part")
+        with urllib.request.urlopen(req, timeout=120) as resp, tmp_dl.open("wb") as out_f:
+            shutil.copyfileobj(resp, out_f, length=524288)
+        h = hashlib.sha256(tmp_dl.read_bytes()).hexdigest()
+        if h != PYTHON_STANDALONE_SHA256:
+            tmp_dl.unlink(missing_ok=True)
+            raise RuntimeError(f"SHA-256 mismatch for CPython standalone: {h} != {PYTHON_STANDALONE_SHA256}")
+        os.replace(tmp_dl, tar_path)
+
+    if env_dir.exists():
+        shutil.rmtree(env_dir)
+    unpack_tmp = CACHE_DIR / "python313-unpack"
+    if unpack_tmp.exists():
+        shutil.rmtree(unpack_tmp)
+    unpack_tmp.mkdir(parents=True)
+    with tarfile.open(tar_path, "r:gz") as tf:
+        tf.extractall(unpack_tmp)
+    shutil.move(str(unpack_tmp / "python"), str(env_dir))
+    shutil.rmtree(unpack_tmp, ignore_errors=True)
+
+    py_bin = env_dir / "bin" / "python3"
+    print(f"[pip] Installing bundled wheels into standalone Python 3.13...")
+    subprocess.run(
+        [str(py_bin), "-I", "-m", "pip", "install", "--no-cache-dir", "--disable-pip-version-check", *BUNDLED_PACKAGES],
+        check=True,
+    )
+    shutil.rmtree(env_dir / "share", ignore_errors=True)
+    shutil.rmtree(env_dir / "include", ignore_errors=True)
+    marker.write_text("ok\n", encoding="utf-8")
+    return env_dir
 
 
 def stage_appdir() -> Path:
@@ -152,30 +215,13 @@ def stage_appdir() -> Path:
             dst_p.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(p, dst_p)
 
-    # 6. Bundle venv site-packages (capstone, lz4, zstandard, numpy) + fontTools for zero-setup AppImage
-    venv_lib = PROJECT_ROOT / ".venv" / "lib"
-    sp_dirs = list(venv_lib.glob("python*/site-packages"))
-    sp_dst = app_root / "site-packages"
-    if sp_dirs:
-        copy_clean_tree(
-            sp_dirs[0],
-            sp_dst,
-            ignore_fn=shutil.ignore_patterns("__pycache__", "*.pyc", "tests", "test"),
-        )
-    else:
-        sp_dst.mkdir(parents=True, exist_ok=True)
-    if not (sp_dst / "fontTools").is_dir():
-        try:
-            import fontTools  # type: ignore
-
-            ft_src = Path(fontTools.__file__).resolve().parent
-            copy_clean_tree(
-                ft_src,
-                sp_dst / "fontTools",
-                ignore_fn=shutil.ignore_patterns("__pycache__", "*.pyc", "tests", "test"),
-            )
-        except Exception:
-            pass
+    # 6. Bundle standalone CPython 3.13 + PyQt6 + Pillow + capstone + lz4 + zstandard + numpy + fontTools
+    standalone_py = _prepare_standalone_python()
+    copy_clean_tree(
+        standalone_py,
+        app_root / "python",
+        ignore_fn=shutil.ignore_patterns("__pycache__", "*.pyc", "tests", "test", ".totk_pkgs_ready_v1"),
+    )
 
     # 7. Desktop entry, icon, and AppRun
     icon_src = PROJECT_ROOT / "assets" / "sce_sys" / "icon0.png"
@@ -200,11 +246,13 @@ def stage_appdir() -> Path:
         "set -euo pipefail\n"
         'HERE="$(dirname "$(readlink -f "$0")")"\n'
         'APP="$HERE/usr/PS5TotkBuilder"\n'
-        'export PYTHONPATH="$APP:$APP/site-packages${PYTHONPATH:+:$PYTHONPATH}"\n'
+        'export PYTHONHOME="$APP/python"\n'
+        'export PYTHONPATH="$APP"\n'
+        "export PYTHONDONTWRITEBYTECODE=1\n"
         'if [ "$#" -eq 0 ]; then\n'
-        '    exec python3 -P -m builder.gui\n'
+        '    exec "$APP/python/bin/python3" -s -P -m builder.gui\n'
         "else\n"
-        '    exec python3 -P -m builder.cli "$@"\n'
+        '    exec "$APP/python/bin/python3" -s -P -m builder.cli "$@"\n'
         "fi\n",
         encoding="utf-8",
     )

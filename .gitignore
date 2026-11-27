@@ -21,3 +21,7 @@ third_party/vma/
 
 .ninja_deps
 .ninja_log
+.local/
+.superpowers/
+RELEASE_GUIDE.md
+RELASE_GUIDE.md

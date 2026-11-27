@@ -201,7 +201,7 @@ def test_deploy_shaders_to_ps5_uploads_only_shader_files(tmp_path: Path, monkeyp
             pass
 
     monkeypatch.setattr(deploy_mod, "PS5Deployer", FakeDeployer)
-    sent = deploy_mod.deploy_shaders_to_ps5("10.0.0.195", 2121, data_dir, force=True)
+    sent = deploy_mod.deploy_shaders_to_ps5("192.0.2.10", 2121, data_dir, force=True)
 
     remote_paths = [p for p, _, _ in uploaded]
     assert remote_paths == [
@@ -230,8 +230,8 @@ def test_gui_i18n_and_cli_shader_flags_exist() -> None:
 
     # Verify CLI accepts --download-shaders, --deploy-shaders-only, and --shader-list without error
     p = cli.build_arg_parser()
-    args = p.parse_args(["--download-shaders", "--deploy-shaders-only", "--deploy-ftp", "10.0.0.195", "--shader-list", "/tmp/x.tsv"])
+    args = p.parse_args(["--download-shaders", "--deploy-shaders-only", "--deploy-ftp", "192.0.2.10", "--shader-list", "/tmp/x.tsv"])
     assert args.download_shaders is True
     assert args.deploy_shaders_only is True
-    assert args.deploy_ftp == "10.0.0.195"
+    assert args.deploy_ftp == "192.0.2.10"
     assert args.shader_list == Path("/tmp/x.tsv")
