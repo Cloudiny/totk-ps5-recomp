@@ -394,3 +394,37 @@ def test_ps5_1440p_cutscene_linear_sampler_and_vpx_guards(tmp_path: Path) -> Non
         "fps_limit = 60",
     ):
         assert expected in ini_txt, f"Missing '{expected}' in generated totk.ini"
+
+
+def test_ps5_pad_data_abi_motion_offsets(tmp_path: Path) -> None:
+    import re
+
+    src = (PROJECT_ROOT / "ps5" / "sdl3_ps5.c").read_text(encoding="utf-8")
+    m = re.search(
+        r"(typedef struct Ps5PadVec3.*?typedef struct Ps5PadData \{.*?\}\s*Ps5PadData;)",
+        src,
+        re.DOTALL,
+    )
+    assert m is not None, "Ps5PadData struct definition not found in ps5/sdl3_ps5.c"
+    assert "_Static_assert(offsetof(Ps5PadData, acceleration) == 0x1C" in src
+    assert "_Static_assert(offsetof(Ps5PadData, angular_velocity) == 0x28" in src
+
+    harness = tmp_path / "test_pad_abi.c"
+    exe = tmp_path / "test_pad_abi"
+    harness.write_text(
+        "#include <assert.h>\n"
+        "#include <stddef.h>\n"
+        "#include <stdint.h>\n"
+        + m.group(1)
+        + "\nint main(void) {\n"
+        "    assert(offsetof(Ps5PadData, orientation) == 0x0C);\n"
+        "    assert(offsetof(Ps5PadData, acceleration) == 0x1C);\n"
+        "    assert(offsetof(Ps5PadData, angular_velocity) == 0x28);\n"
+        "    assert(offsetof(Ps5PadData, touch_data) == 0x34);\n"
+        "    assert(offsetof(Ps5PadData, connected) == 0x4C);\n"
+        "    return 0;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["cc", "-Wall", "-Wextra", "-Werror", str(harness), "-o", str(exe)], check=True)
+    subprocess.run([str(exe)], check=True)

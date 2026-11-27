@@ -20,12 +20,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .deploy import PS5_LAYOUT_TEXT, deploy_to_ps5
+from .deploy import PS5_LAYOUT_TEXT, deploy_shaders_to_ps5, deploy_to_ps5
 from .pipeline import (
     build_full_ps5_game,
     build_runtime_archive,
     default_kit_paths,
 )
+from .shaders import download_shader_list, update_and_repack_ps5_shaders
 
 
 def extract_single_game_file(
@@ -84,7 +85,7 @@ def run_check(paths) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="PS5 Tears of the Kingdom Builder (PPSA99199)")
     parser.add_argument("--check", action="store_true", help="Verify kit & toolchain")
     parser.add_argument("--show-layout", action="store_true", help="Print exact PS5 directory layout")
@@ -97,6 +98,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gen-dir", type=Path, default=None, help="Existing lifted C directory")
     parser.add_argument("--skip-lift", action="store_true", help="Reuse existing --gen-dir without re-lifting")
     parser.add_argument("--shaders", type=Path, default=None, help="Directory with pre-translated shader caches")
+    parser.add_argument(
+        "--shader-list",
+        type=Path,
+        default=None,
+        help="Explicit MacNativeGames shader_list.tsv path (auto-downloaded if omitted)",
+    )
+    parser.add_argument(
+        "--download-shaders",
+        action="store_true",
+        help="Download MacNativeGames shader_list.tsv and repack missing PS5 shader variants",
+    )
     parser.add_argument(
         "--pretranslate-shaders",
         action="store_true",
@@ -149,9 +161,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--deploy-ftp", default=None, help="PS5 IP address to upload built output via ftpsrv")
     parser.add_argument("--ftp-port", type=int, default=2121, help="PS5 ftpsrv port (default: 2121)")
     parser.add_argument("--deploy-only", action="store_true", help="Skip building; upload existing --out to PS5")
+    parser.add_argument(
+        "--deploy-shaders-only",
+        action="store_true",
+        help="Upload ONLY the pre-translated PS5 shader cache (shader-cache.pack + shader-prepared.bin) via FTP",
+    )
     parser.add_argument("--deploy-romfs", action="store_true", help="Also upload 15.86 GiB romfs.bin over FTP")
     parser.add_argument("--skip-ftp-shaders", action="store_true", help="Skip shader-cache.pack upload over FTP")
     parser.add_argument("--skip-ftp-ini", action="store_true", help="Keep existing /data/totk-ps5/totk.ini on PS5")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_arg_parser()
     args = parser.parse_args(argv)
 
     paths = default_kit_paths()
@@ -163,6 +185,42 @@ def main(argv: list[str] | None = None) -> int:
 
     work_dir = (args.work or (paths.project_root / "build" / "game_ps5")).resolve()
     out_root = (args.out or (paths.project_root / "out")).resolve()
+    data_out = out_root / "data_totk_ps5"
+
+    # Standalone shader-list download / repack / shader-only FTP deploy flow
+    if (args.download_shaders or args.deploy_shaders_only) and not args.game and not args.exefs:
+        if args.download_shaders:
+            stage_dir = (
+                args.shaders.resolve()
+                if args.shaders and (args.shaders / "seed-programs.bin").is_file()
+                else (paths.project_root / "build" / "ps5_shaders_v143")
+                if (paths.project_root / "build" / "ps5_shaders_v143" / "seed-programs.bin").is_file()
+                else (work_dir / "ps5_shaders_v143")
+            )
+            try:
+                update_and_repack_ps5_shaders(
+                    paths,
+                    stage_dir=stage_dir,
+                    out_data_dir=data_out,
+                    shader_list_tsv=args.shader_list.resolve() if args.shader_list else None,
+                    shader_src_dir=args.shaders.resolve() if args.shaders else None,
+                    romfs_dir=args.romfs.resolve() if args.romfs else None,
+                    jobs=args.jobs,
+                    download_list=args.shader_list is None,
+                )
+            except FileNotFoundError as exc:
+                if args.deploy_shaders_only:
+                    raise
+                if args.shader_list is None:
+                    download_shader_list()
+                print(f"[warn] {exc}")
+        if args.deploy_shaders_only:
+            if not args.deploy_ftp:
+                parser.error("--deploy-shaders-only requires --deploy-ftp <PS5_IP>")
+            deploy_shaders_to_ps5(args.deploy_ftp, args.ftp_port, data_out, force=True)
+        elif args.deploy_ftp:
+            deploy_shaders_to_ps5(args.deploy_ftp, args.ftp_port, data_out, force=True)
+        return 0
 
     default_rt_lib = paths.project_root / "build" / "libtotkrt_ps5.a"
     bundled_rt_lib = paths.project_root / "kit_bundle" / "libtotkrt_ps5.a"
@@ -182,6 +240,10 @@ def main(argv: list[str] | None = None) -> int:
         if not exefs_dir:
             parser.error("Provide --game <totk.xci|nsp> or --exefs <dir> (or --deploy-only)")
 
+        shader_list_path = args.shader_list.resolve() if args.shader_list else None
+        if args.download_shaders and shader_list_path is None:
+            shader_list_path, _ = download_shader_list()
+
         gen_dir = (args.gen_dir or (work_dir / "generated")).resolve()
         build_full_ps5_game(
             paths=paths,
@@ -192,10 +254,11 @@ def main(argv: list[str] | None = None) -> int:
             out_root=out_root,
             runtime_lib=rt_lib.resolve(),
             shader_src_dir=args.shaders.resolve() if args.shaders else None,
+            shader_list_path=shader_list_path,
             jobs=args.jobs,
             skip_lift=args.skip_lift,
             build_prompts=not args.no_prompts,
-            pretranslate_shaders=args.pretranslate_shaders,
+            pretranslate_shaders=args.pretranslate_shaders or args.download_shaders,
             mods=[m.resolve() for m in args.mods],
             output_res=args.res,
             render_scale=args.scale,
@@ -206,6 +269,9 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.deploy_ftp:
+        if args.deploy_shaders_only:
+            deploy_shaders_to_ps5(args.deploy_ftp, args.ftp_port, data_out, force=True)
+            return 0
         romfs_bin = (romfs_dir / "romfs.bin") if romfs_dir and (romfs_dir / "romfs.bin").is_file() else None
         deploy_to_ps5(
             host=args.deploy_ftp,

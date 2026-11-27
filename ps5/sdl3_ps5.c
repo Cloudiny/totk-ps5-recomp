@@ -12,6 +12,7 @@
 
 #include <math.h>
 #include <pthread.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,7 +35,8 @@ extern int32_t sceAudioOutClose(int32_t handle);
 extern int32_t sceKernelUsleep(uint32_t microseconds);
 extern void rt_log(const char *fmt, ...);
 
-/* Standard PS4/PS5 ScePadData binary layout */
+/* Standard PS4/PS5 ScePadData binary layout (OpenOrbis / libScePad ABI:
+ * orientation @ 0x0C, acceleration @ 0x1C, angularVelocity @ 0x28, touchData @ 0x34, connected @ 0x4C). */
 typedef struct Ps5PadVec3 { float x, y, z; } Ps5PadVec3;
 typedef struct Ps5PadQuat { float x, y, z, w; } Ps5PadQuat;
 typedef struct Ps5PadData {
@@ -43,12 +45,18 @@ typedef struct Ps5PadData {
     uint8_t l2, r2;
     uint8_t pad0[2];
     Ps5PadQuat orientation;
-    Ps5PadVec3 angular_velocity;
     Ps5PadVec3 acceleration;
+    Ps5PadVec3 angular_velocity;
     uint8_t touch_data[24];
     uint8_t connected;
     uint8_t reserved[64];
 } Ps5PadData;
+
+_Static_assert(offsetof(Ps5PadData, orientation) == 0x0C, "ScePadData.orientation must sit at 0x0C");
+_Static_assert(offsetof(Ps5PadData, acceleration) == 0x1C, "ScePadData.acceleration must sit at 0x1C");
+_Static_assert(offsetof(Ps5PadData, angular_velocity) == 0x28, "ScePadData.angularVelocity must sit at 0x28");
+_Static_assert(offsetof(Ps5PadData, touch_data) == 0x34, "ScePadData.touchData must sit at 0x34");
+_Static_assert(offsetof(Ps5PadData, connected) == 0x4C, "ScePadData.connected must sit at 0x4C");
 
 typedef struct Ps5PadVibration {
     uint8_t large_motor;

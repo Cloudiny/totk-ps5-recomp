@@ -191,6 +191,7 @@ class PS5Deployer:
         existing_sizes: dict[str, int] | None = None,
         force: bool = False,
         delete_first: bool = False,
+        atomic: bool = False,
     ) -> None:
         _assert_safe_remote(remote_path)
         if not local_path.is_file():
@@ -201,8 +202,11 @@ class PS5Deployer:
             self.log(f"[skip] {remote_path} already present ({total:,} bytes)")
             return
 
-        if delete_first:
+        target_path = f"{remote_path}.tmp" if atomic else remote_path
+        if delete_first and not atomic:
             self.delete_quiet(remote_path)
+        if atomic:
+            self.delete_quiet(target_path)
 
         sent = 0
         t0 = time.monotonic()
@@ -225,13 +229,21 @@ class PS5Deployer:
         self.log(f"[put] {local_path.name} ({total / (1024**2):.2f} MiB) -> {remote_path}")
         try:
             with local_path.open("rb") as fp:
-                self.ftp.storbinary(f"STOR {remote_path}", fp, blocksize=512 * 1024, callback=on_chunk)
+                self.ftp.storbinary(f"STOR {target_path}", fp, blocksize=512 * 1024, callback=on_chunk)
+            if atomic:
+                self.ftp.rename(target_path, remote_path)
         except ftplib.error_perm as exc:
+            if atomic:
+                self.delete_quiet(target_path)
             if "Text file busy" in str(exc) or "550" in str(exc):
                 raise RuntimeError(
                     f"PS5 rechazó escribir {remote_path} ({exc}). "
                     "Cierra Tears of the Kingdom en la PS5 e inténtalo de nuevo."
                 ) from exc
+            raise
+        except Exception:
+            if atomic:
+                self.delete_quiet(target_path)
             raise
         self.chmod_777(remote_path)
 
@@ -312,7 +324,7 @@ def deploy_to_ps5(
             pack = data_dir / "shader-cache" / "shader-cache.pack"
             if pack.is_file():
                 sc_sizes = d.list_sizes("/data/totk-ps5/shader-cache")
-                d.upload_file(pack, "/data/totk-ps5/shader-cache/shader-cache.pack", sc_sizes)
+                d.upload_file(pack, "/data/totk-ps5/shader-cache/shader-cache.pack", sc_sizes, atomic=True)
 
         # 4. PlayStation button prompts overlays
         if upload_prompts:
@@ -378,5 +390,51 @@ def deploy_to_ps5(
             log("[ok] Full romfs.bin uploaded!")
 
         log("[ok] PS5 FTP deploy complete!")
+    finally:
+        d.close()
+
+
+def deploy_shaders_to_ps5(
+    host: str,
+    port: int,
+    data_dir: Path,
+    *,
+    force: bool = True,
+    log_fn: Callable[[str], None] | None = None,
+) -> list[str]:
+    """Upload ONLY the pre-translated PS5 shader cache files to /data/totk-ps5/ via FTP.
+
+    Strictly touches /data/totk-ps5/totk_xlate.id, shader-prepared.bin, and
+    shader-cache/shader-cache.pack (never modifies saves, mods, totk.ini, or eboot.bin).
+    """
+    log = log_fn or (lambda msg: print(msg, flush=True))
+    pack = data_dir / "shader-cache" / "shader-cache.pack"
+    if not pack.is_file():
+        raise FileNotFoundError(
+            f"No se encontró shader-cache.pack en {pack}. "
+            "Descarga y reempaqueta los shaders primero."
+        )
+
+    uploaded: list[str] = []
+    d = PS5Deployer(host, port, log_fn=log)
+    try:
+        for rdir in ("/data/totk-ps5", "/data/totk-ps5/shader-cache"):
+            d.mkdir_p(rdir)
+            d.chmod_777(rdir)
+
+        data_sizes = d.list_sizes("/data/totk-ps5")
+        for fname in ("totk_xlate.id", "shader-prepared.bin"):
+            src = data_dir / fname
+            if src.is_file():
+                rpath = f"/data/totk-ps5/{fname}"
+                d.upload_file(src, rpath, existing_sizes=data_sizes, force=force, atomic=True)
+                uploaded.append(rpath)
+
+        sc_sizes = d.list_sizes("/data/totk-ps5/shader-cache")
+        rpack = "/data/totk-ps5/shader-cache/shader-cache.pack"
+        d.upload_file(pack, rpack, existing_sizes=sc_sizes, force=force, atomic=True)
+        uploaded.append(rpack)
+        log(f"[ok] Shaders enviados a PS5 ({len(uploaded)} archivos, {pack.stat().st_size / (1024**2):.1f} MiB)!")
+        return uploaded
     finally:
         d.close()

@@ -482,6 +482,7 @@ def pretranslate_ps5_shaders(
     data_out: Path,
     work_dir: Path,
     shader_src_dir: Path | None = None,
+    shader_list_path: Path | None = None,
     jobs: int = 8,
 ) -> str:
     """Pre-translate & pack all RomFS shaders for PS5 RADV (TOTK_ZERO_LOCALS=0) or reuse existing pack."""
@@ -557,11 +558,30 @@ def pretranslate_ps5_shaders(
             if not dst_b.exists():
                 shutil.copy2(src_b, dst_b)
 
+    from .shaders import download_shader_list, resolve_shader_list
+
+    resolved_list = resolve_shader_list(paths, explicit_list=shader_list_path)
+    if resolved_list is None:
+        try:
+            resolved_list, _ = download_shader_list()
+        except Exception as exc:
+            print(f"[ps5-totk] WARNING: could not download MacNativeGames shader_list.tsv ({exc})")
+
     print(f"[ps5-totk] Preparing RomFS shader inventory ({ver_tag}) -> {stage_dir}...")
-    run_cmd(
-        [str(paths.python_bin), str(prep_py), str(stage_dir), "--version", ver_tag, "--romfs", str(romfs_dir), "--no-run"],
-        "prepare_shaders.py (--no-run)",
-    )
+    prep_cmd = [
+        str(paths.python_bin),
+        str(prep_py),
+        str(stage_dir),
+        "--version",
+        ver_tag,
+        "--romfs",
+        str(romfs_dir),
+        "--no-run",
+    ]
+    if resolved_list is not None:
+        print(f"[ps5-totk] Using MacNativeGames shader list: {resolved_list}")
+        prep_cmd += ["--list", str(resolved_list)]
+    run_cmd(prep_cmd, "prepare_shaders.py (--no-run)")
 
     # Augment seed-answers.bin with mvprev=1 copies of all VS records for zero-shimmer FSR 3 Frame Gen
     ans_path = stage_dir / "seed-answers.bin"
@@ -755,6 +775,7 @@ def build_full_ps5_game(
     out_root: Path,
     runtime_lib: Path,
     shader_src_dir: Path | None = None,
+    shader_list_path: Path | None = None,
     jobs: int = 8,
     skip_lift: bool = False,
     build_prompts: bool = True,
@@ -1066,6 +1087,7 @@ def build_full_ps5_game(
             data_out,
             work_dir,
             shader_src_dir=shader_src_dir,
+            shader_list_path=shader_list_path,
             jobs=jobs,
         )
 

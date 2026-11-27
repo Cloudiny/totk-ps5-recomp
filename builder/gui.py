@@ -50,6 +50,7 @@ from .gamebanana import (
     search_mods,
 )
 from .pipeline import TITLE_ID, default_kit_paths
+from .shaders import resolve_shader_list
 
 # ---- Local-only UI preferences (never stored inside the repo) ----
 CONFIG_PATH = Path.home() / ".config" / "ps5-totk-builder" / "ui_prefs.json"
@@ -110,6 +111,11 @@ I18N: dict[str, dict[str, str]] = {
         "c_opt_s": "Ajustes verificados para 1080p / 1440p a 120 Hz (FSR 3.1.5 opcional)",
         "chk_prompts": "Íconos PlayStation por defecto (△ ○ × □, ○=Confirmar)",
         "chk_shaders": "Pre-traducir Shaders PS5 RADV + mvprev",
+        "c_sh_t": "Shaders Completos (MacNativeGames)",
+        "c_sh_s": "Descarga las ~58k variantes reales de juego, reempaqueta shader-cache.pack y envíalo al PS5",
+        "btn_sh_dl": "⬇  Descargar & Reempaquetar",
+        "btn_sh_push": "🚀  Enviar Shaders a PS5",
+        "btn_sh_both": "⚡  Descargar + Enviar a PS5",
         "lbl_res": "Resolución",
         "lbl_hz": "Refresco (Hz)",
         "lbl_fg": "Frame Gen",
@@ -205,6 +211,11 @@ I18N: dict[str, dict[str, str]] = {
         "c_opt_s": "Verified defaults for 1080p / 1440p at 120 Hz (optional FSR 3.1.5)",
         "chk_prompts": "Default PlayStation prompts (△ ○ × □, ○=Confirm)",
         "chk_shaders": "Pre-translate PS5 RADV + mvprev shaders",
+        "c_sh_t": "Complete Shaders (MacNativeGames)",
+        "c_sh_s": "Download ~58k real gameplay variants, repack shader-cache.pack, and push to PS5",
+        "btn_sh_dl": "⬇  Download & Repack",
+        "btn_sh_push": "🚀  Send Shaders to PS5",
+        "btn_sh_both": "⚡  Download + Send to PS5",
         "lbl_res": "Resolution",
         "lbl_hz": "Refresh (Hz)",
         "lbl_fg": "Frame Gen",
@@ -1517,7 +1528,15 @@ class PS5TotkWindow(QMainWindow):
         dock_lay.addLayout(btn_bar)
         main_lay.addWidget(self.dock)
 
-        self.action_buttons = [self.btn_check, self.btn_ftp_only, self.btn_build, self.btn_both]
+        self.action_buttons = [
+            self.btn_check,
+            self.btn_ftp_only,
+            self.btn_build,
+            self.btn_both,
+            self.btn_sh_dl,
+            self.btn_sh_push,
+            self.btn_sh_both,
+        ]
 
         self.apply_language(self.lang)
         self.select_page("build")
@@ -1703,8 +1722,42 @@ class PS5TotkWindow(QMainWindow):
             p_grid.addWidget(cb, 1, col_idx)
         opt_lay.addLayout(p_grid)
         lay.addWidget(c_opt)
+
+        # Card 3: Complete Shader Cache (MacNativeGames download + repack + PS5 push)
+        c_sh, sh_lay = self._make_card("c_sh_t", "c_sh_s")
+        self.lbl_sh_status = QLabel("")
+        self.lbl_sh_status.setStyleSheet(f"font-size: 12px; color: {C_MUTED};")
+        self.lbl_sh_status.setWordWrap(True)
+        sh_lay.addWidget(self.lbl_sh_status)
+
+        sh_btn_row = QHBoxLayout()
+        sh_btn_row.setSpacing(10)
+        self.btn_sh_dl = self._bind_tr(QPushButton(), "btn_sh_dl")
+        self.btn_sh_dl.setMinimumHeight(38)
+        self.btn_sh_dl.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_sh_dl.clicked.connect(self._run_shaders_download)
+
+        self.btn_sh_push = self._bind_tr(QPushButton(), "btn_sh_push")
+        self.btn_sh_push.setObjectName("PrimaryGold")
+        self.btn_sh_push.setMinimumHeight(38)
+        self.btn_sh_push.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_sh_push.clicked.connect(self._run_shaders_push)
+
+        self.btn_sh_both = self._bind_tr(QPushButton(), "btn_sh_both")
+        self.btn_sh_both.setObjectName("PrimaryBlue")
+        self.btn_sh_both.setMinimumHeight(38)
+        self.btn_sh_both.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_sh_both.clicked.connect(self._run_shaders_both)
+
+        sh_btn_row.addWidget(self.btn_sh_dl)
+        sh_btn_row.addWidget(self.btn_sh_push)
+        sh_btn_row.addStretch(1)
+        sh_btn_row.addWidget(self.btn_sh_both)
+        sh_lay.addLayout(sh_btn_row)
+        lay.addWidget(c_sh)
         lay.addStretch(1)
 
+        self.ed_out.textChanged.connect(lambda _t: self._refresh_shader_status())
         self._page_indices["build"] = self.stack.addWidget(scroll)
 
     # ================ PAGE 2: EDITORIAL MODS & GAMEBANANA ================
@@ -2071,6 +2124,7 @@ class PS5TotkWindow(QMainWindow):
         self._refresh_cat_tabs()
         self._update_installed_tab_label()
         self._rebuild_installed_lists()
+        self._refresh_shader_status()
 
     # ---- PS5 Connection Handling ----
     def open_ps5_connect_modal(self, *, startup: bool = False, on_connected: Callable[[], None] | None = None) -> None:
@@ -2567,13 +2621,81 @@ class PS5TotkWindow(QMainWindow):
         if self._validate(need_ftp=True, deploy_only=False):
             self.run_cmd_async(self.build_cli_cmd(deploy_ftp=True), self.tr_key("btn_both"))
 
+    def _refresh_shader_status(self) -> None:
+        if not hasattr(self, "lbl_sh_status"):
+            return
+        tsv = resolve_shader_list(self.paths)
+        out_dir = Path(self.ed_out.text().strip() or str(Path.home() / "TOTK-PS5-Out"))
+        pack = out_dir / "data_totk_ps5" / "shader-cache" / "shader-cache.pack"
+        if self.lang == "es":
+            list_txt = (
+                f"Lista MacNativeGames: lista ({tsv.stat().st_size / (1024**2):.1f} MiB)"
+                if tsv
+                else "Lista MacNativeGames: sin descargar aún"
+            )
+            pack_txt = (
+                f"Pack local: {pack.stat().st_size / (1024**2):.1f} MiB listo"
+                if pack.is_file()
+                else "Pack local: aún no generado en la carpeta de salida"
+            )
+        else:
+            list_txt = (
+                f"MacNativeGames list: ready ({tsv.stat().st_size / (1024**2):.1f} MiB)"
+                if tsv
+                else "MacNativeGames list: not downloaded yet"
+            )
+            pack_txt = (
+                f"Local pack: {pack.stat().st_size / (1024**2):.1f} MiB ready"
+                if pack.is_file()
+                else "Local pack: not generated in output folder yet"
+            )
+        self.lbl_sh_status.setText(f"●  {list_txt}   ·   {pack_txt}")
+
+    def build_shader_cli_cmd(self, *, download: bool, deploy: bool) -> list[str]:
+        out_dir = self.ed_out.text().strip() or str(Path.home() / "TOTK-PS5-Out")
+        self.prefs["out"] = out_dir
+        _save_prefs(self.prefs)
+        cmd = [str(self.paths.python_bin), "-P", "-u", "-m", "builder.cli", "--out", out_dir]
+        if download:
+            cmd.append("--download-shaders")
+            if self.ed_romfs.text().strip():
+                cmd += ["--romfs", self.ed_romfs.text().strip()]
+            if self.ed_shaders.text().strip():
+                cmd += ["--shaders", self.ed_shaders.text().strip()]
+        if deploy:
+            cmd += [
+                "--deploy-shaders-only",
+                "--deploy-ftp",
+                self.ed_ftp_host.text().strip(),
+                "--ftp-port",
+                self.ed_ftp_port.text().strip() or "2121",
+            ]
+        return cmd
+
+    def _run_shaders_download(self) -> None:
+        self.run_cmd_async(self.build_shader_cli_cmd(download=True, deploy=False), self.tr_key("btn_sh_dl"))
+
+    def _run_shaders_push(self) -> None:
+        if self._validate(need_ftp=True, deploy_only=True):
+            self.run_cmd_async(self.build_shader_cli_cmd(download=False, deploy=True), self.tr_key("btn_sh_push"))
+
+    def _run_shaders_both(self) -> None:
+        if self._validate(need_ftp=True, deploy_only=True):
+            self.run_cmd_async(self.build_shader_cli_cmd(download=True, deploy=True), self.tr_key("btn_sh_both"))
+
     def run_cmd_async(self, cmd: list[str], label: str) -> None:
         self._set_busy(True, label)
         self.log_box.clear()
         self.append_log(f">>> {label}\n")
         w = CommandWorker(cmd, self)
         w.line.connect(self.append_log)
-        w.finished_rc.connect(lambda rc: (self.append_log(f"\n{'[ok] Done.' if rc == 0 else f'[err] Failed (exit {rc}).'}\n"), self._set_busy(False)))
+        w.finished_rc.connect(
+            lambda rc: (
+                self.append_log(f"\n{'[ok] Done.' if rc == 0 else f'[err] Failed (exit {rc}).'}\n"),
+                self._set_busy(False),
+                self._refresh_shader_status(),
+            )
+        )
         self._cmd_worker = w
         w.start()
 
