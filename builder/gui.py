@@ -1,18 +1,38 @@
-"""PS5 Tears of the Kingdom Builder — Premium Bilingual (ES/EN) Obsidian & Zonai UI (PPSA99199)."""
+"""PS5 Tears of the Kingdom Builder — Editorial PyQt6 UI (Obsidian × PlayStation × Zonai TOTK)."""
 
 from __future__ import annotations
 
-import io
-import queue
+import json
 import subprocess
 import sys
-import threading
-import tkinter as tk
 import webbrowser
 from pathlib import Path
-from tkinter import filedialog, messagebox, scrolledtext, ttk
+from typing import Callable
 
-from PIL import Image, ImageTk
+from PyQt6.QtCore import QEvent, QObject, QPointF, QRectF, QSize, Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap, QTextCharFormat, QTextCursor
+from PyQt6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .deploy import PS5_LAYOUT_TEXT, PS5Deployer
 from .gamebanana import (
@@ -30,31 +50,34 @@ from .gamebanana import (
 )
 from .pipeline import TITLE_ID, default_kit_paths
 
-# ---- Obsidian x PlayStation x Zonai Emerald & Hylian Gold Design Tokens ----
-C_BG = "#090C12"          # Deep PS5 obsidian canvas
-C_SIDEBAR = "#0E131D"     # Elevated sidebar
-C_CARD = "#131A26"        # Card surface
-C_CARD_ALT = "#192334"    # Button / interactive surface
-C_BORDER = "#223047"      # Crisp hairline border
-C_INPUT = "#0B1018"       # Dark input well
-C_TERM = "#06090F"        # Console terminal
+# ---- Local-only UI preferences (never stored inside the repo) ----
+CONFIG_PATH = Path.home() / ".config" / "ps5-totk-builder" / "ui_prefs.json"
 
-C_ACCENT = "#2EE6A6"      # Zonai Emerald (Triangle / primary CTA)
-C_ACCENT_HOV = "#4BF2B8"
-C_ACCENT_TXT = "#061610"
+# ---- Editorial TOTK × PlayStation Palette ----
+C_BG = "#080C12"
+C_SIDEBAR = "#0D131D"
+C_CARD = "#111824"
+C_CARD_ALT = "#162030"
+C_INPUT = "#0A0F17"
+C_BORDER = "#223047"
+C_GOLD_BORDER = "rgba(230, 195, 106, 0.34)"
+
+C_ACCENT = "#2EE6A6"      # Zonai Emerald
 C_GOLD = "#E6C36A"        # Hylian Gold
-C_BLUE = "#38BDF8"        # PS5 Blue (Cross / secondary CTA)
-C_BLUE_HOV = "#60CCF9"
-C_CORAL = "#FB7185"       # PS Circle coral-red
-C_VIOLET = "#C084FC"      # PS Square violet
+C_BLUE = "#38BDF8"        # PS5 Blue
+C_CORAL = "#FB7185"       # PS Circle
+C_VIOLET = "#C084FC"      # PS Square
 C_DANGER = "#F87171"
 
-C_TEXT = "#F1F5F9"
+C_TEXT = "#F4EFE2"        # Warm parchment white
+C_TEXT_BODY = "#E2E8F0"
 C_MUTED = "#94A3B8"
 C_DIM = "#64748B"
 
+SERIF_STACK = "'Noto Serif', 'Georgia', 'Liberation Serif', 'DejaVu Serif', serif"
+SANS_STACK = "'Noto Sans', 'Inter', 'Ubuntu', 'Cantarell', 'Segoe UI', sans-serif"
+MONO_STACK = "'JetBrains Mono', 'DejaVu Sans Mono', 'Ubuntu Mono', monospace"
 
-# ---- Full ES / EN Localization Dictionary ----
 I18N: dict[str, dict[str, str]] = {
     "es": {
         "win_title": f"PS5 TOTK Builder — Tears of the Kingdom ({TITLE_ID})",
@@ -67,86 +90,89 @@ I18N: dict[str, dict[str, str]] = {
         "nav_layout_t": "Layout & Arte PS5",
         "nav_layout_s": "Rutas y portada personalizada",
         "status_ready": "●  Listo para compilar",
-        "status_sub": "PS5 RADV · -O3 Zen 2 · 120 Hz\n1080p/1440p · 38 Trofeos",
+        "status_sub": "PS5 RADV · -O3 Zen 2 · 120 Hz\n1080p / 1440p · 38 Trofeos",
+        "p_build_eyebrow": "Compilación Nativa · PlayStation 5",
         "p_build_h": "Compilar & Pre-traducir Shaders",
         "p_build_s": "Genera eboot.bin (-O3 Zen 2), íconos PlayStation y caché RADV + mvprev desde tu copia legal del juego.",
         "c_src_t": "Origen del Juego",
-        "c_src_s": "Usa .xci/.nsp + prod.keys o carpetas extraídas",
+        "c_src_s": "Selecciona tu .xci/.nsp + prod.keys, o usa carpetas ya extraídas",
+        "c_adv_t": "Opcional · Carpetas ya extraídas y caché previo",
         "lbl_game": "Juego base (.xci / .nsp)",
         "lbl_update": "Update (.nsp opcional)",
         "lbl_keys": "Switch prod.keys",
-        "lbl_exefs": "O ExeFS extraído",
-        "lbl_romfs": "O RomFS extraído",
-        "lbl_shaders": "Caché shaders (opcional)",
+        "lbl_exefs": "ExeFS extraído",
+        "lbl_romfs": "RomFS extraído",
+        "lbl_shaders": "Caché de shaders previo",
         "lbl_out": "Carpeta de salida",
         "btn_browse": "Examinar",
         "c_opt_t": "Perfil PS5",
-        "c_opt_s": "Valores verificados para 1080p/1440p @ 120 Hz (FSR 3.1.5 opcional)",
-        "chk_prompts": "Íconos PlayStation por defecto (△ ○ × □, ○=A)",
+        "c_opt_s": "Ajustes verificados para 1080p / 1440p a 120 Hz (FSR 3.1.5 opcional)",
+        "chk_prompts": "Íconos PlayStation por defecto (△ ○ × □, ○=Confirmar)",
         "chk_shaders": "Pre-traducir Shaders PS5 RADV + mvprev",
         "lbl_res": "Resolución",
         "lbl_hz": "Refresco (Hz)",
         "lbl_fg": "Frame Gen",
         "lbl_scale": "Escala 3D",
-        "lbl_lang": "Idioma Juego",
-        "p_mods_h": "Mods RomFS & Buscador GameBanana",
-        "p_mods_s": "Busca mods en GameBanana (ID 7617), descárgalos en 1 clic o añade carpetas/.zip locales para /data/totk-ps5/mods/.",
-        "c_gb_t": "Buscador GameBanana (Tears of the Kingdom)",
-        "c_gb_s": "Modelos, trajes, HUD, gameplay y texturas RomFS",
+        "lbl_lang": "Idioma del Juego",
+        "p_mods_eyebrow": "Desde GameBanana (ID 7617) y tu consola PS5",
+        "p_mods_h": "Mods · Tears of the Kingdom",
+        "tab_gb_browse": "Explorar",
+        "tab_gb_installed": "Tus Mods",
+        "search_ph": "Buscar mods en GameBanana...",
         "btn_search": "Buscar",
-        "btn_gb_dl": "⬇  Descargar e Inyectar",
-        "btn_gb_ftp": "▲  Subir Mods a PS5",
-        "gb_note": "Nota PS5: mods RomFS (trajes, UI, mapas, gameplay) funcionan directo. Presets ReShade de PC no corren en PS5 y mods con nuevos shaders .bfsha requieren pre-traducción en PC.",
-        "c_queue_t": "Mods Locales / Descargados en Cola",
-        "c_queue_s": "Se copian a /data/totk-ps5/mods/ y se gestionan en Touchpad + Options",
-        "btn_add_dir": "+ Carpeta",
-        "btn_add_zip": "+ Archivo .zip",
-        "btn_rm_mod": "Quitar",
-        "p_ftp_h": "Despliegue Directo a PS5 (FTP)",
+        "btn_install": "Instalar",
+        "btn_install_ps5": "Instalar en PS5",
+        "btn_zoom": "Ampliar vista previa",
+        "btn_close": "Cerrar",
+        "btn_open_web": "Ver página",
+        "gb_loading_detail": "Cargando descripción y galería desde GameBanana...",
+        "gb_no_desc": "Sin descripción disponible para este mod.",
+        "btn_add_zip": "📥  Instalar .zip",
+        "btn_add_dir": "📁  Instalar carpeta",
+        "btn_ps5_refresh": "🔄  Actualizar PS5",
+        "btn_push_mods": "▲  Subir Cola a PS5",
+        "btn_delete": "Eliminar",
+        "btn_remove": "Quitar",
+        "ps5_mods_hdr": "Instalados en PS5 (/data/totk-ps5/mods/)",
+        "local_mods_hdr": "Cola local lista para subir",
+        "ps5_mods_empty": "No hay mods instalados en PS5 o aún no te has conectado.",
+        "local_mods_empty": "Aún no hay mods locales en cola. Descarga desde Explorar o añade un .zip / carpeta.",
+        "p_ftp_eyebrow": "Despliegue Seguro · ftpsrv",
+        "p_ftp_h": "Enviar a PS5 (FTP)",
         "p_ftp_s": "Solo escribe en /data/homebrew/PPSA99199 y /data/totk-ps5. Nunca toca otros juegos ni tus partidas.",
-        "c_ftp_t": "Conexión ftpsrv",
-        "c_ftp_s": "Abre ftpsrv en tu PS5 e ingresa su IP local",
-        "lbl_ip": "IP de la PS5",
-        "lbl_port": "Puerto",
+        "c_ftp_t": "Conexión a la consola",
+        "c_ftp_s": "Inicia ftpsrv en tu PS5, ingresa su IP local y conéctate",
+        "lbl_ip": "IP local de la PS5",
+        "lbl_port": "Puerto FTP",
+        "btn_connect_ps5": "Conectar a PS5",
         "chk_ftp_sh": "Subir shader-cache.pack (caché RADV + mvprev pre-traducido)",
         "chk_ftp_ini": "Subir / actualizar /data/totk-ps5/totk.ini",
-        "chk_ftp_romfs": "Subir también romfs.bin (~15.86 GiB; solo en primera instalación)",
-        "p_lay_h": "Layout PS5 & Arte de Portada",
-        "p_lay_s": "El AppImage ya incluye portada oficial personalizada (icon0.png + 4K pic0/pic1.dds). Opcionalmente descarga otra portada desde URL.",
-        "c_art_t": "Portada PS5 Personalizada (Opcional)",
-        "c_art_s": "icon0.png, pic0.dds y pic1.dds ya vienen embebidos en el AppImage",
-        "lbl_art_url": "URL de imagen (PNG/JPG)",
+        "chk_ftp_romfs": "Subir también romfs.bin (~15.86 GiB · solo primera instalación)",
+        "p_lay_eyebrow": "Identidad Visual & Estructura",
+        "p_lay_h": "Layout & Arte PS5",
+        "p_lay_s": "La portada personalizada (icon0.png + 4K pic0/pic1.dds) ya viene integrada. Puedes reemplazar icon0.png desde una URL.",
+        "c_art_t": "Portada PS5 Personalizada",
+        "c_art_s": "Descarga y convierte cualquier PNG/JPG a 512×512 para la PS5",
+        "lbl_art_url": "URL de imagen (PNG / JPG)",
         "btn_art_dl": "Descargar icon0.png",
         "btn_check": "Verificar Kit",
         "btn_ftp_only": "Solo Subir FTP",
         "btn_build": "▶  Compilar TOTK PS5",
         "btn_both": "⚡  Compilar + Enviar a PS5",
-        "err_no_game_t": "Faltan archivos",
+        "err_no_game_t": "Faltan archivos del juego",
         "err_no_game_m": "Selecciona un juego base (.xci/.nsp) o una carpeta ExeFS extraída.",
         "err_no_keys_t": "Falta prod.keys",
         "err_no_keys_m": "Para extraer archivos .xci/.nsp necesitas seleccionar tu Switch prod.keys.",
-        "err_no_ip_t": "Falta IP de PS5",
-        "err_no_ip_m": "Ingresa la IP local de tu PS5 en 'Enviar a PS5'.",
-        "welcome": f"[ps5-totk] PS5 TOTK Builder listo ({TITLE_ID}). Selecciona tu juego y presiona Compilar.\n",
-        "pick_file_t": "Seleccionar archivo del mod",
-        "pick_file_h": "Elige qué archivo descargar de GameBanana:",
-        "btn_cancel": "Cancelar",
-        "btn_download": "Descargar",
-        "tab_gb_browse": "🌐  Explorar GameBanana",
-        "tab_gb_installed": "📦  Instalados en PS5 / Cola Local",
-        "btn_gb_detail": "🔍  Ver Completo",
-        "btn_gb_open": "🌐  Abrir en Web",
-        "gb_preview_empty": "Selecciona un mod para ver su foto y descripción.\nHaz doble clic para abrir la ficha completa.",
-        "gb_loading_detail": "Cargando descripción e imágenes desde GameBanana...",
-        "gb_no_desc": "(Sin descripción disponible)",
-        "c_ps5_mods_t": "Mods Instalados en PS5 (/data/totk-ps5/mods/)",
-        "c_ps5_mods_s": "Consulta o elimina mods activos directamente en tu consola por FTP",
-        "btn_ps5_refresh": "🔄  Actualizar desde PS5",
-        "btn_ps5_del": "🗑  Eliminar de PS5",
-        "ps5_del_confirm_t": "Eliminar mod de PS5",
-        "ps5_del_confirm_m": "¿Seguro que deseas eliminar '{name}' de /data/totk-ps5/mods/ en tu PS5?",
-        "btn_prev_img": "◀ Anterior",
-        "btn_next_img": "Siguiente ▶",
+        "welcome": f"[ps5-totk] PS5 TOTK Builder listo ({TITLE_ID}). Selecciona tu juego o conecta tu PS5.\n",
+        "conn_title": "Conectar a tu PS5",
+        "conn_sub": "Inicia ftpsrv en tu PS5 para ver tus mods instalados, subir archivos y desplegar directamente.",
+        "conn_skip": "Continuar sin PS5",
+        "conn_cancel": "Cancelar",
+        "conn_btn": "Conectar ahora",
+        "conn_testing": "Conectando con la PS5...",
+        "conn_need_ip": "Ingresa la IP local de tu PS5 (ej. 192.168.1.50).",
+        "del_confirm_t": "Eliminar mod de PS5",
+        "del_confirm_m": "¿Seguro que deseas eliminar '{name}' de /data/totk-ps5/mods/ en tu PS5?",
     },
     "en": {
         "win_title": f"PS5 TOTK Builder — Tears of the Kingdom ({TITLE_ID})",
@@ -159,55 +185,70 @@ I18N: dict[str, dict[str, str]] = {
         "nav_layout_t": "PS5 Layout & Art",
         "nav_layout_s": "Paths & custom cover art",
         "status_ready": "●  Ready to build",
-        "status_sub": "PS5 RADV · -O3 Zen 2 · 120 Hz\n1080p/1440p · 38 Trophies",
+        "status_sub": "PS5 RADV · -O3 Zen 2 · 120 Hz\n1080p / 1440p · 38 Trophies",
+        "p_build_eyebrow": "Native Recompilation · PlayStation 5",
         "p_build_h": "Build & Pre-Translate Shaders",
-        "p_build_s": "Builds eboot.bin (-O3 Zen 2), PlayStation prompts & RADV + mvprev shader pack from your legal game dump.",
+        "p_build_s": "Builds eboot.bin (-O3 Zen 2), PlayStation prompts & RADV + mvprev shader cache from your legal game copy.",
         "c_src_t": "Game Source",
-        "c_src_s": "Use .xci/.nsp + prod.keys or extracted folders",
+        "c_src_s": "Pick your .xci/.nsp + prod.keys, or point to already-extracted folders",
+        "c_adv_t": "Optional · Extracted Folders & Existing Shader Cache",
         "lbl_game": "Base game (.xci / .nsp)",
         "lbl_update": "Update (.nsp optional)",
         "lbl_keys": "Switch prod.keys",
-        "lbl_exefs": "Or extracted ExeFS",
-        "lbl_romfs": "Or extracted RomFS",
-        "lbl_shaders": "Shader cache (optional)",
+        "lbl_exefs": "Extracted ExeFS",
+        "lbl_romfs": "Extracted RomFS",
+        "lbl_shaders": "Existing shader cache",
         "lbl_out": "Output folder",
         "btn_browse": "Browse",
         "c_opt_t": "PS5 Profile",
-        "c_opt_s": "Verified defaults for 1080p/1440p @ 120 Hz (optional FSR 3.1.5)",
-        "chk_prompts": "Default PlayStation prompts (△ ○ × □, ○=A)",
+        "c_opt_s": "Verified defaults for 1080p / 1440p at 120 Hz (optional FSR 3.1.5)",
+        "chk_prompts": "Default PlayStation prompts (△ ○ × □, ○=Confirm)",
         "chk_shaders": "Pre-translate PS5 RADV + mvprev shaders",
         "lbl_res": "Resolution",
         "lbl_hz": "Refresh (Hz)",
         "lbl_fg": "Frame Gen",
         "lbl_scale": "3D Scale",
-        "lbl_lang": "Game Lang",
-        "p_mods_h": "RomFS Mods & GameBanana Browser",
-        "p_mods_s": "Browse GameBanana (Game ID 7617), 1-click download & inject, or add local folders/.zip to /data/totk-ps5/mods/.",
-        "c_gb_t": "GameBanana Browser (Tears of the Kingdom)",
-        "c_gb_s": "Models, outfits, HUD, gameplay & RomFS textures",
+        "lbl_lang": "Game Language",
+        "p_mods_eyebrow": "From GameBanana (ID 7617) and your PS5 console",
+        "p_mods_h": "Mods · Tears of the Kingdom",
+        "tab_gb_browse": "Browse",
+        "tab_gb_installed": "Your Mods",
+        "search_ph": "Search mods on GameBanana...",
         "btn_search": "Search",
-        "btn_gb_dl": "⬇  Download & Inject",
-        "btn_gb_ftp": "▲  Push Mods to PS5",
-        "gb_note": "PS5 note: RomFS mods (outfits, UI, models, gameplay) work out of the box. PC ReShade presets do not run on PS5, and mods adding new .bfsha shaders require PC pre-translation.",
-        "c_queue_t": "Staged Local / Downloaded Mods",
-        "c_queue_s": "Installed to /data/totk-ps5/mods/ and toggleable in Touchpad + Options",
-        "btn_add_dir": "+ Folder",
-        "btn_add_zip": "+ .zip File",
-        "btn_rm_mod": "Remove",
-        "p_ftp_h": "Direct PS5 Deployment (FTP)",
-        "p_ftp_s": "Only writes inside /data/homebrew/PPSA99199 and /data/totk-ps5. Never touches other titles or existing saves.",
-        "c_ftp_t": "ftpsrv Connection",
-        "c_ftp_s": "Start ftpsrv on your PS5 and enter its local IP",
-        "lbl_ip": "PS5 IP Address",
-        "lbl_port": "Port",
+        "btn_install": "Install",
+        "btn_install_ps5": "Install to PS5",
+        "btn_zoom": "Expand preview",
+        "btn_close": "Close",
+        "btn_open_web": "Open page",
+        "gb_loading_detail": "Loading description & preview gallery from GameBanana...",
+        "gb_no_desc": "No description available for this mod.",
+        "btn_add_zip": "📥  Install .zip",
+        "btn_add_dir": "📁  Install folder",
+        "btn_ps5_refresh": "🔄  Refresh PS5",
+        "btn_push_mods": "▲  Push Queue to PS5",
+        "btn_delete": "Delete",
+        "btn_remove": "Remove",
+        "ps5_mods_hdr": "Installed on PS5 (/data/totk-ps5/mods/)",
+        "local_mods_hdr": "Local Queue Ready to Push",
+        "ps5_mods_empty": "No mods installed on PS5 yet, or PS5 not connected.",
+        "local_mods_empty": "No local mods queued yet. Download from Browse or add a .zip / folder.",
+        "p_ftp_eyebrow": "Safe Deployment · ftpsrv",
+        "p_ftp_h": "Deploy to PS5 (FTP)",
+        "p_ftp_s": "Only writes inside /data/homebrew/PPSA99199 and /data/totk-ps5. Never touches other titles or saves.",
+        "c_ftp_t": "Console Connection",
+        "c_ftp_s": "Start ftpsrv on your PS5, enter its local IP and connect",
+        "lbl_ip": "PS5 Local IP",
+        "lbl_port": "FTP Port",
+        "btn_connect_ps5": "Connect to PS5",
         "chk_ftp_sh": "Upload shader-cache.pack (pre-translated RADV + mvprev)",
         "chk_ftp_ini": "Upload / overwrite /data/totk-ps5/totk.ini",
-        "chk_ftp_romfs": "Also upload romfs.bin (~15.86 GiB; first-time install only)",
-        "p_lay_h": "PS5 Layout & Cover Artwork",
-        "p_lay_s": "Custom TOTK PS5 artwork (icon0.png + 4K pic0/pic1.dds) is already embedded in the AppImage. Optionally fetch custom art from a URL.",
-        "c_art_t": "Custom PS5 Cover Art (Optional)",
-        "c_art_s": "icon0.png, pic0.dds & pic1.dds are already embedded by default",
-        "lbl_art_url": "Image URL (PNG/JPG)",
+        "chk_ftp_romfs": "Also upload romfs.bin (~15.86 GiB · first install only)",
+        "p_lay_eyebrow": "Visual Identity & Folder Layout",
+        "p_lay_h": "PS5 Layout & Cover Art",
+        "p_lay_s": "Custom TOTK PS5 cover art (icon0.png + 4K pic0/pic1.dds) is already embedded. Optionally replace icon0.png from a URL.",
+        "c_art_t": "Custom PS5 Cover Art",
+        "c_art_s": "Download and convert any PNG/JPG to 512×512 for PS5",
+        "lbl_art_url": "Image URL (PNG / JPG)",
         "btn_art_dl": "Fetch icon0.png",
         "btn_check": "Verify Kit",
         "btn_ftp_only": "FTP Upload Only",
@@ -217,1656 +258,2163 @@ I18N: dict[str, dict[str, str]] = {
         "err_no_game_m": "Select a base game (.xci/.nsp) or an extracted ExeFS folder.",
         "err_no_keys_t": "Missing prod.keys",
         "err_no_keys_m": "Switch prod.keys is required to extract .xci/.nsp game files.",
-        "err_no_ip_t": "Missing PS5 IP",
-        "err_no_ip_m": "Enter your PS5 local IP in 'Deploy to PS5'.",
-        "welcome": f"[ps5-totk] PS5 TOTK Builder ready ({TITLE_ID}). Pick your game dump and click Build.\n",
-        "pick_file_t": "Select mod archive",
-        "pick_file_h": "Choose which GameBanana file to download:",
-        "btn_cancel": "Cancel",
-        "btn_download": "Download",
-        "tab_gb_browse": "🌐  Browse GameBanana",
-        "tab_gb_installed": "📦  Installed on PS5 / Local Queue",
-        "btn_gb_detail": "🔍  Full Details",
-        "btn_gb_open": "🌐  Open Web",
-        "gb_preview_empty": "Select a mod to preview its photo and description.\nDouble-click to open the full detail view.",
-        "gb_loading_detail": "Loading description & images from GameBanana...",
-        "gb_no_desc": "(No description available)",
-        "c_ps5_mods_t": "Installed Mods on PS5 (/data/totk-ps5/mods/)",
-        "c_ps5_mods_s": "Inspect or remove active mods directly on your console via FTP",
-        "btn_ps5_refresh": "🔄  Refresh from PS5",
-        "btn_ps5_del": "🗑  Delete from PS5",
-        "ps5_del_confirm_t": "Delete mod from PS5",
-        "ps5_del_confirm_m": "Remove '{name}' from /data/totk-ps5/mods/ on your PS5?",
-        "btn_prev_img": "◀ Prev",
-        "btn_next_img": "Next ▶",
+        "welcome": f"[ps5-totk] PS5 TOTK Builder ready ({TITLE_ID}). Pick your game dump or connect your PS5.\n",
+        "conn_title": "Connect to your PS5",
+        "conn_sub": "Start ftpsrv on your PS5 to view installed mods, push updates, and deploy directly.",
+        "conn_skip": "Continue Offline",
+        "conn_cancel": "Cancel",
+        "conn_btn": "Connect Now",
+        "conn_testing": "Connecting to PS5...",
+        "conn_need_ip": "Enter your PS5 local IP address (e.g. 192.168.1.50).",
+        "del_confirm_t": "Delete mod from PS5",
+        "del_confirm_m": "Remove '{name}' from /data/totk-ps5/mods/ on your PS5?",
     },
 }
 
 
-def _pick_font(root: tk.Tk) -> str:
+def _load_prefs() -> dict:
     try:
-        from tkinter import font as tkfont
-
-        fams = set(tkfont.families(root))
-        for cand in ("Inter", "Segoe UI", "Ubuntu", "Cantarell", "Noto Sans", "DejaVu Sans"):
-            if cand in fams:
-                return cand
+        if CONFIG_PATH.is_file():
+            return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     except Exception:
         pass
-    return "Sans"
+    return {}
 
 
-def _pick_serif_font(root: tk.Tk) -> str:
+def _save_prefs(data: dict) -> None:
     try:
-        from tkinter import font as tkfont
-
-        fams = set(tkfont.families(root))
-        for cand in ("Georgia", "Noto Serif", "Liberation Serif", "DejaVu Serif", "Times New Roman"):
-            if cand in fams:
-                return cand
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except Exception:
         pass
-    return "Serif"
 
 
-def _load_logo(icon_path: Path, size: int = 52) -> tk.PhotoImage | None:
-    if not icon_path.is_file():
-        return None
-    try:
-        from PIL import Image, ImageDraw, ImageTk  # type: ignore
+def _rounded_pixmap(src: QPixmap, width: int, height: int, radius: int = 8) -> QPixmap:
+    if src.isNull():
+        return QPixmap()
+    scaled = src.scaled(width, height, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+    x = max(0, (scaled.width() - width) // 2)
+    y = max(0, (scaled.height() - height) // 2)
+    cropped = scaled.copy(x, y, min(width, scaled.width()), min(height, scaled.height()))
+    out = QPixmap(width, height)
+    out.fill(Qt.GlobalColor.transparent)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(0, 0, width, height), radius, radius)
+    p.setClipPath(path)
+    p.drawPixmap(0, 0, cropped)
+    p.end()
+    return out
 
-        im = Image.open(icon_path).convert("RGBA").resize((size, size), Image.Resampling.LANCZOS)
-        mask = Image.new("L", (size, size), 0)
-        ImageDraw.Draw(mask).rounded_rectangle((0, 0, size - 1, size - 1), radius=12, fill=255)
-        im.putalpha(mask)
-        return ImageTk.PhotoImage(im)  # type: ignore[return-value]
-    except Exception:
+
+# ---- Global Editorial QSS Stylesheet ----
+APP_QSS = f"""
+QMainWindow, QDialog, QStackedWidget, QScrollArea, QScrollArea QWidget#ScrollCanvas {{
+    background-color: {C_BG};
+    color: {C_TEXT_BODY};
+    font-family: {SANS_STACK};
+    font-size: 13px;
+}}
+QWidget {{
+    font-family: {SANS_STACK};
+    color: {C_TEXT_BODY};
+}}
+QLabel {{
+    background: transparent;
+}}
+QScrollArea {{
+    background-color: {C_BG};
+    border: none;
+}}
+QScrollBar:vertical {{
+    background: transparent;
+    width: 8px;
+    margin: 4px 0px 4px 0px;
+}}
+QScrollBar::handle:vertical {{
+    background: rgba(230, 195, 106, 0.35);
+    min-height: 36px;
+    border-radius: 4px;
+}}
+QScrollBar::handle:vertical:hover {{
+    background: rgba(230, 195, 106, 0.65);
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0px;
+}}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+    background: transparent;
+}}
+QFrame#Sidebar {{
+    background-color: {C_SIDEBAR};
+    border-right: 1px solid #1C2638;
+}}
+QFrame#EditorialCard {{
+    background-color: {C_CARD};
+    border: 1px solid #1E2B40;
+    border-radius: 12px;
+}}
+QFrame#StatusCard {{
+    background-color: #0B1019;
+    border: 1px solid #1E2B40;
+    border-radius: 10px;
+}}
+QFrame#ModalFrame {{
+    background-color: #0D121B;
+    border: 1px solid rgba(230, 195, 106, 0.55);
+    border-radius: 14px;
+}}
+QLabel#Eyebrow {{
+    font-family: {SERIF_STACK};
+    font-style: italic;
+    font-size: 13px;
+    color: {C_GOLD};
+}}
+QLabel#PageTitle {{
+    font-family: {SERIF_STACK};
+    font-size: 26px;
+    font-weight: 600;
+    color: {C_TEXT};
+}}
+QLabel#PageSub {{
+    font-size: 13px;
+    color: {C_MUTED};
+}}
+QLabel#CardTitle {{
+    font-family: {SERIF_STACK};
+    font-size: 16px;
+    font-weight: 600;
+    color: {C_TEXT};
+}}
+QLabel#CardSub {{
+    font-size: 12px;
+    color: {C_MUTED};
+}}
+QLabel#FieldLabel {{
+    font-size: 12px;
+    font-weight: 600;
+    color: #CBD5E1;
+}}
+QLineEdit {{
+    background-color: {C_INPUT};
+    color: #F8FAFC;
+    border: 1px solid #24334B;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    selection-background-color: {C_ACCENT};
+    selection-color: #061610;
+}}
+QLineEdit:focus {{
+    border: 1px solid {C_GOLD};
+    background-color: #0D1420;
+}}
+QComboBox {{
+    background-color: {C_INPUT};
+    color: #F8FAFC;
+    border: 1px solid #24334B;
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-size: 13px;
+    min-height: 22px;
+}}
+QComboBox:hover {{
+    border: 1px solid rgba(230, 195, 106, 0.65);
+}}
+QComboBox::drop-down {{
+    border: none;
+    width: 26px;
+}}
+QComboBox::down-arrow {{
+    width: 0px;
+    height: 0px;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid {C_GOLD};
+    margin-right: 10px;
+}}
+QComboBox QAbstractItemView {{
+    background-color: #101724;
+    color: #F8FAFC;
+    border: 1px solid {C_GOLD};
+    selection-background-color: rgba(230, 195, 106, 0.22);
+    selection-color: {C_GOLD};
+    padding: 4px;
+    outline: none;
+}}
+QCheckBox {{
+    color: #E2E8F0;
+    font-size: 13px;
+    spacing: 10px;
+}}
+QCheckBox::indicator {{
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    border: 1px solid #334663;
+    background-color: {C_INPUT};
+}}
+QCheckBox::indicator:checked {{
+    background-color: {C_ACCENT};
+    border-color: {C_ACCENT};
+}}
+QPushButton {{
+    background-color: {C_CARD_ALT};
+    color: #E2E8F0;
+    border: 1px solid #26364F;
+    border-radius: 8px;
+    padding: 8px 15px;
+    font-size: 13px;
+    font-weight: 600;
+}}
+QPushButton:hover {{
+    background-color: #1F2D42;
+    border-color: #384E70;
+}}
+QPushButton:disabled {{
+    background-color: #101622;
+    color: #475569;
+    border-color: #1A2333;
+}}
+QPushButton#PrimaryEmerald {{
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3CF0B3, stop:1 #1ECB8E);
+    color: #051811;
+    border: 1px solid #4AF4BA;
+    font-weight: 700;
+}}
+QPushButton#PrimaryEmerald:hover {{
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #5CF5C1, stop:1 #2EE6A6);
+}}
+QPushButton#PrimaryGold {{
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #F4DC8D, stop:1 #C99B3B);
+    color: #191304;
+    border: 1px solid #F7E5A8;
+    font-weight: 700;
+}}
+QPushButton#PrimaryGold:hover {{
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FBE8A9, stop:1 #DAB050);
+}}
+QPushButton#PrimaryBlue {{
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #58CCFA, stop:1 #25A8E8);
+    color: #04131D;
+    border: 1px solid #75D6FC;
+    font-weight: 700;
+}}
+QPushButton#PrimaryBlue:hover {{
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #79D8FC, stop:1 #38BDF8);
+}}
+QPushButton#DangerBtn {{
+    background-color: rgba(248, 113, 113, 0.12);
+    color: #FCA5A5;
+    border: 1px solid rgba(248, 113, 113, 0.35);
+}}
+QPushButton#DangerBtn:hover {{
+    background-color: rgba(248, 113, 113, 0.24);
+}}
+QPushButton#GhostBtn {{
+    background: transparent;
+    color: {C_MUTED};
+    border: 1px solid transparent;
+    padding: 7px 12px;
+}}
+QPushButton#GhostBtn:hover {{
+    color: {C_TEXT};
+    background-color: rgba(255, 255, 255, 0.05);
+}}
+QPushButton#SubTab {{
+    background: transparent;
+    color: {C_MUTED};
+    border: 1px solid transparent;
+    border-radius: 7px;
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: 600;
+}}
+QPushButton#SubTab:hover {{
+    color: {C_TEXT};
+}}
+QPushButton#SubTab[active="true"] {{
+    background-color: rgba(230, 195, 106, 0.12);
+    color: {C_TEXT};
+    border: 1px solid {C_GOLD};
+}}
+QPushButton#CatTab {{
+    background: transparent;
+    color: {C_MUTED};
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 5px 11px;
+    font-size: 12.5px;
+    font-weight: 600;
+}}
+QPushButton#CatTab:hover {{
+    color: {C_TEXT};
+}}
+QPushButton#CatTab[active="true"] {{
+    background-color: rgba(230, 195, 106, 0.13);
+    color: {C_GOLD};
+    border: 1px solid rgba(230, 195, 106, 0.65);
+}}
+QPushButton#InlineInstall {{
+    background: transparent;
+    color: {C_GOLD};
+    border: none;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 6px 10px;
+}}
+QPushButton#InlineInstall:hover {{
+    color: #FBE8A9;
+    background-color: rgba(230, 195, 106, 0.12);
+    border-radius: 6px;
+}}
+QPlainTextEdit#Terminal {{
+    background-color: #06090F;
+    color: #CBD5E1;
+    border: 1px solid #1C273A;
+    border-radius: 10px;
+    font-family: {MONO_STACK};
+    font-size: 12px;
+    padding: 8px 10px;
+}}
+QProgressBar {{
+    background-color: #131B29;
+    border: none;
+    border-radius: 2px;
+    max-height: 4px;
+    min-height: 4px;
+}}
+QProgressBar::chunk {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {C_ACCENT}, stop:1 {C_GOLD});
+    border-radius: 2px;
+}}
+"""
+
+
+# ---- Crisp Vector PlayStation Symbol Widget ----
+class PSSymbolWidget(QWidget):
+    def __init__(self, shape: str, color: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._shape = shape
+        self._color = QColor(color)
+        self.setFixedSize(24, 24)
+
+    def set_color(self, color: str) -> None:
+        self._color = QColor(color)
+        self.update()
+
+    def paintEvent(self, _ev) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(self._color, 2.2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        if self._shape == "triangle":
+            path = QPainterPath()
+            path.moveTo(12, 4.2)
+            path.lineTo(20, 19.2)
+            path.lineTo(4, 19.2)
+            path.closeSubpath()
+            p.drawPath(path)
+        elif self._shape == "circle":
+            p.drawEllipse(QRectF(4.5, 4.5, 15, 15))
+        elif self._shape == "cross":
+            p.drawLine(QPointF(5.5, 5.5), QPointF(18.5, 18.5))
+            p.drawLine(QPointF(18.5, 5.5), QPointF(5.5, 18.5))
+        elif self._shape == "square":
+            p.drawRect(QRectF(5, 5, 14, 14))
+        p.end()
+
+
+# ---- Preserved PlayStation Sidebar Nav Row ----
+class SidebarNavItem(QFrame):
+    clicked = pyqtSignal()
+
+    def __init__(self, shape: str, accent: str, title: str, sub: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._accent = accent
+        self._active = False
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setObjectName("NavItem")
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 12, 0)
+        lay.setSpacing(10)
+
+        self._bar = QFrame()
+        self._bar.setFixedWidth(3)
+        lay.addWidget(self._bar)
+
+        inner = QHBoxLayout()
+        inner.setContentsMargins(10, 10, 4, 10)
+        inner.setSpacing(12)
+        self._sym = PSSymbolWidget(shape, C_DIM)
+        inner.addWidget(self._sym)
+
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        self._title = QLabel(title)
+        self._title.setStyleSheet("font-size: 13.5px; font-weight: 700;")
+        self._sub = QLabel(sub)
+        self._sub.setStyleSheet("font-size: 11px;")
+        col.addWidget(self._title)
+        col.addWidget(self._sub)
+        inner.addLayout(col, 1)
+        lay.addLayout(inner, 1)
+        self.set_active(False)
+
+    def set_texts(self, title: str, sub: str) -> None:
+        self._title.setText(title)
+        self._sub.setText(sub)
+
+    def set_active(self, active: bool) -> None:
+        self._active = active
+        bg = "#162134" if active else "transparent"
+        self.setStyleSheet(f"QFrame#NavItem {{ background-color: {bg}; border-radius: 8px; }}")
+        self._bar.setStyleSheet(f"background-color: {self._accent if active else 'transparent'}; border-radius: 2px;")
+        self._sym.set_color(self._accent if active else C_DIM)
+        self._title.setStyleSheet(f"font-size: 13.5px; font-weight: 700; color: {C_TEXT if active else C_MUTED};")
+        self._sub.setStyleSheet(f"font-size: 11px; color: {C_MUTED if active else C_DIM};")
+
+    def enterEvent(self, ev) -> None:  # noqa: N802
+        if not self._active:
+            self.setStyleSheet("QFrame#NavItem { background-color: #121B2B; border-radius: 8px; }")
+        super().enterEvent(ev)
+
+    def leaveEvent(self, ev) -> None:  # noqa: N802
+        if not self._active:
+            self.setStyleSheet("QFrame#NavItem { background-color: transparent; border-radius: 8px; }")
+        super().leaveEvent(ev)
+
+    def mouseReleaseEvent(self, ev) -> None:  # noqa: N802
+        if ev.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(ev)
+
+
+# ---- Background Worker Threads ----
+class FnWorker(QThread):
+    done = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, fn: Callable[[], object], parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._fn = fn
+
+    def run(self) -> None:
         try:
-            img = tk.PhotoImage(file=str(icon_path))
-            factor = max(1, img.width() // size)
-            return img.subsample(factor, factor) if factor > 1 else img
-        except Exception:
-            return None
+            self.done.emit(self._fn())
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
-def _draw_ps_symbol(canvas: tk.Canvas, shape: str, color: str, bg: str) -> None:
-    """Crisp vector PlayStation symbol (triangle / circle / cross / square) on a 24x24 canvas."""
-    canvas.configure(bg=bg)
-    canvas.delete("all")
-    w = 2.2
-    if shape == "triangle":
-        canvas.create_polygon(12, 4, 20, 19, 4, 19, outline=color, fill="", width=w, joinstyle="round")
-    elif shape == "circle":
-        canvas.create_oval(4.5, 4.5, 19.5, 19.5, outline=color, width=w)
-    elif shape == "cross":
-        canvas.create_line(5.5, 5.5, 18.5, 18.5, fill=color, width=w, capstyle="round")
-        canvas.create_line(18.5, 5.5, 5.5, 18.5, fill=color, width=w, capstyle="round")
-    elif shape == "square":
-        canvas.create_rectangle(5, 5, 19, 19, outline=color, width=w)
+class CommandWorker(QThread):
+    line = pyqtSignal(str)
+    finished_rc = pyqtSignal(int)
+
+    def __init__(self, cmd: list[str], parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._cmd = cmd
+
+    def run(self) -> None:
+        try:
+            proc = subprocess.Popen(self._cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            assert proc.stdout is not None
+            for ln in proc.stdout:
+                self.line.emit(ln)
+            self.finished_rc.emit(proc.wait())
+        except Exception as exc:
+            self.line.emit(f"[err] {exc}\n")
+            self.finished_rc.emit(1)
 
 
-class ModernButton(tk.Frame):
-    """Flat, sleek button with hover highlight, focus feel, and dynamic label update."""
+class ThumbBatchWorker(QThread):
+    thumb_ready = pyqtSignal(str, bytes)
 
+    def __init__(self, urls: list[str], parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._urls = urls
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _fetch(u: str) -> tuple[str, bytes | None]:
+            if self._cancelled:
+                return u, None
+            return u, fetch_image_bytes(u, timeout=5)
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            for url, raw in pool.map(_fetch, self._urls):
+                if self._cancelled:
+                    break
+                if raw:
+                    self.thumb_ready.emit(url, raw)
+
+
+# ---- PS5 Connection Modal (Startup + On-Demand) ----
+class PS5ConnectDialog(QDialog):
     def __init__(
         self,
-        parent: tk.Widget,
-        text: str,
-        command,
+        parent: QWidget,
+        tr: Callable[[str], str],
+        initial_host: str,
+        initial_port: str,
         *,
-        bg: str = C_CARD_ALT,
-        hover_bg: str = "#24324A",
-        fg: str = C_TEXT,
-        border: str = C_BORDER,
-        font_spec=("Sans", 9, "bold"),
-        padx: int = 14,
-        pady: int = 7,
+        startup: bool = False,
     ) -> None:
-        super().__init__(parent, bg=border, padx=1, pady=1, cursor="hand2")
-        self._bg = bg
-        self._hover_bg = hover_bg
-        self._fg = fg
-        self._cmd = command
-        self._enabled = True
+        super().__init__(parent)
+        self._tr = tr
+        self.connected_host = ""
+        self.connected_port = 2121
+        self.ps5_mods: list[str] = []
+        self._worker: FnWorker | None = None
 
-        self._inner = tk.Label(
-            self, text=text, bg=bg, fg=fg, font=font_spec, padx=padx, pady=pady, cursor="hand2"
+        self.setWindowTitle(tr("conn_title"))
+        self.setModal(True)
+        self.setFixedWidth(480)
+
+        root_lay = QVBoxLayout(self)
+        root_lay.setContentsMargins(14, 14, 14, 14)
+
+        frame = QFrame()
+        frame.setObjectName("ModalFrame")
+        lay = QVBoxLayout(frame)
+        lay.setContentsMargins(24, 22, 24, 20)
+        lay.setSpacing(12)
+
+        eyebrow = QLabel("PLAYSTATION 5 · FTPSRV")
+        eyebrow.setStyleSheet(f"font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: {C_ACCENT};")
+        lay.addWidget(eyebrow)
+
+        title = QLabel(tr("conn_title"))
+        title.setStyleSheet(f"font-family: {SERIF_STACK}; font-size: 22px; font-weight: 600; color: {C_TEXT};")
+        lay.addWidget(title)
+
+        sub = QLabel(tr("conn_sub"))
+        sub.setWordWrap(True)
+        sub.setStyleSheet(f"font-size: 13px; color: {C_MUTED};")
+        lay.addWidget(sub)
+
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        col_ip = QVBoxLayout()
+        col_ip.setSpacing(5)
+        lbl_ip = QLabel(tr("lbl_ip"))
+        lbl_ip.setObjectName("FieldLabel")
+        self.ed_ip = QLineEdit(initial_host)
+        self.ed_ip.setPlaceholderText("192.168.1.50")
+        self.ed_ip.returnPressed.connect(self._do_connect)
+        col_ip.addWidget(lbl_ip)
+        col_ip.addWidget(self.ed_ip)
+
+        col_pt = QVBoxLayout()
+        col_pt.setSpacing(5)
+        lbl_pt = QLabel(tr("lbl_port"))
+        lbl_pt.setObjectName("FieldLabel")
+        self.ed_port = QLineEdit(initial_port or "2121")
+        self.ed_port.setFixedWidth(96)
+        self.ed_port.returnPressed.connect(self._do_connect)
+        col_pt.addWidget(lbl_pt)
+        col_pt.addWidget(self.ed_port)
+
+        row.addLayout(col_ip, 1)
+        row.addLayout(col_pt)
+        lay.addLayout(row)
+
+        self.lbl_msg = QLabel("")
+        self.lbl_msg.setWordWrap(True)
+        self.lbl_msg.setStyleSheet(f"font-size: 12.5px; color: {C_GOLD}; min-height: 20px;")
+        lay.addWidget(self.lbl_msg)
+
+        btns = QHBoxLayout()
+        btns.setSpacing(10)
+        btns.addStretch(1)
+        self.btn_skip = QPushButton(tr("conn_skip") if startup else tr("conn_cancel"))
+        self.btn_skip.setObjectName("GhostBtn")
+        self.btn_skip.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_skip.clicked.connect(self.reject)
+        btns.addWidget(self.btn_skip)
+
+        self.btn_go = QPushButton(f"🔌  {tr('conn_btn')}")
+        self.btn_go.setObjectName("PrimaryEmerald")
+        self.btn_go.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_go.clicked.connect(self._do_connect)
+        btns.addWidget(self.btn_go)
+        lay.addLayout(btns)
+
+        root_lay.addWidget(frame)
+        self.ed_ip.setFocus()
+
+    def _do_connect(self) -> None:
+        host = self.ed_ip.text().strip()
+        if not host:
+            self.lbl_msg.setStyleSheet(f"font-size: 12.5px; color: {C_DANGER};")
+            self.lbl_msg.setText(self._tr("conn_need_ip"))
+            return
+        port = int(self.ed_port.text().strip() or "2121")
+        self.btn_go.setEnabled(False)
+        self.lbl_msg.setStyleSheet(f"font-size: 12.5px; color: {C_GOLD};")
+        self.lbl_msg.setText(self._tr("conn_testing"))
+
+        def _work() -> list[str]:
+            dep = PS5Deployer(host, port, timeout=6, log_fn=lambda _m: None)
+            try:
+                return dep.list_dirs("/data/totk-ps5/mods")
+            finally:
+                dep.close()
+
+        self._worker = FnWorker(_work, self)
+        self._worker.done.connect(lambda dirs: self._on_ok(host, port, dirs))
+        self._worker.failed.connect(self._on_fail)
+        self._worker.start()
+
+    def _on_ok(self, host: str, port: int, dirs: list[str]) -> None:
+        self.connected_host = host
+        self.connected_port = port
+        self.ps5_mods = list(dirs)
+        self.accept()
+
+    def _on_fail(self, err: str) -> None:
+        self.btn_go.setEnabled(True)
+        self.lbl_msg.setStyleSheet(f"font-size: 12.5px; color: {C_DANGER};")
+        self.lbl_msg.setText(f"Error FTP: {err}")
+
+
+# ---- Full-Screen Gallery Zoom Dialog ----
+class GalleryLightboxDialog(QDialog):
+    def __init__(self, parent: QWidget, title: str, urls: list[str], start_idx: int = 0) -> None:
+        super().__init__(parent)
+        self._urls = urls
+        self._idx = start_idx
+        self._workers: list[FnWorker] = []
+
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.resize(960, 620)
+        self.setStyleSheet("QDialog { background-color: #05080D; }")
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(12)
+
+        self.lbl_img = QLabel("Cargando vista previa...")
+        self.lbl_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_img.setStyleSheet(f"color: {C_MUTED}; font-size: 14px; background-color: #0A0F17; border-radius: 10px;")
+        self.lbl_img.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        lay.addWidget(self.lbl_img, 1)
+
+        bar = QHBoxLayout()
+        if len(urls) > 1:
+            b_prev = QPushButton("◀  Anterior")
+            b_prev.setCursor(Qt.CursorShape.PointingHandCursor)
+            b_prev.clicked.connect(lambda: self._load(self._idx - 1))
+            b_next = QPushButton("Siguiente  ▶")
+            b_next.setCursor(Qt.CursorShape.PointingHandCursor)
+            b_next.clicked.connect(lambda: self._load(self._idx + 1))
+            bar.addWidget(b_prev)
+            bar.addWidget(b_next)
+        self.lbl_pos = QLabel("")
+        self.lbl_pos.setStyleSheet(f"color: {C_GOLD}; font-size: 13px; font-weight: 600;")
+        bar.addWidget(self.lbl_pos)
+        bar.addStretch(1)
+        b_close = QPushButton("Cerrar")
+        b_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        b_close.clicked.connect(self.accept)
+        bar.addWidget(b_close)
+        lay.addLayout(bar)
+
+        self._load(start_idx)
+
+    def _load(self, idx: int) -> None:
+        if not self._urls:
+            return
+        self._idx = idx % len(self._urls)
+        self.lbl_pos.setText(f"{self._idx + 1} / {len(self._urls)}")
+        url = self._urls[self._idx]
+        self.lbl_img.setPixmap(QPixmap())
+        self.lbl_img.setText("Cargando...")
+
+        w = FnWorker(lambda: fetch_image_bytes(url, timeout=8), self)
+        w.done.connect(self._on_img)
+        self._workers.append(w)
+        w.start()
+
+    def _on_img(self, raw: object) -> None:
+        if isinstance(raw, bytes) and raw:
+            pm = QPixmap()
+            if pm.loadFromData(raw):
+                self.lbl_img.setText("")
+                self.lbl_img.setPixmap(
+                    pm.scaled(
+                        max(400, self.lbl_img.width() - 20),
+                        max(300, self.lbl_img.height() - 20),
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
+
+
+# ---- Editorial Mod Detail Modal (Directly modeled on oot-din Image 2) ----
+class ModDetailDialog(QDialog):
+    def __init__(
+        self,
+        parent: QWidget,
+        mod: GBMod,
+        tr: Callable[[str], str],
+        is_es: bool,
+        cached_detail: GBModDetail | None,
+        on_detail_loaded: Callable[[GBModDetail], None],
+        on_install: Callable[[GBMod, GBFile | None], None],
+    ) -> None:
+        super().__init__(parent)
+        self._mod = mod
+        self._tr = tr
+        self._is_es = is_es
+        self._on_detail_loaded = on_detail_loaded
+        self._on_install = on_install
+        self._files: list[GBFile] = []
+        self._gallery_urls: list[str] = []
+        self._workers: list[FnWorker] = []
+
+        self.setWindowTitle(f"{mod.name} — Tears of the Kingdom")
+        self.setModal(True)
+        self.resize(780, 620)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(14, 14, 14, 14)
+
+        frame = QFrame()
+        frame.setObjectName("ModalFrame")
+        lay = QVBoxLayout(frame)
+        lay.setContentsMargins(28, 24, 28, 22)
+        lay.setSpacing(12)
+
+        lbl_title = QLabel(mod.name)
+        lbl_title.setWordWrap(True)
+        lbl_title.setStyleSheet(f"font-family: {SERIF_STACK}; font-size: 25px; font-weight: 600; color: {C_TEXT};")
+        lay.addWidget(lbl_title)
+
+        views_lbl = "vistas" if is_es else "views"
+        self.lbl_meta = QLabel(f"{mod.author} · {mod.category}  ·  ♥ {mod.likes:,} · {mod.views:,} {views_lbl}")
+        self.lbl_meta.setStyleSheet(f"font-size: 13.5px; color: {C_MUTED};")
+        lay.addWidget(self.lbl_meta)
+
+        self.cb_files = QComboBox()
+        self.cb_files.addItem("Cargando archivos..." if is_es else "Loading files...")
+        self.cb_files.setMinimumHeight(38)
+        lay.addWidget(self.cb_files)
+
+        prev_row = QHBoxLayout()
+        prev_row.setSpacing(16)
+        self.lbl_thumb = QLabel("...")
+        self.lbl_thumb.setFixedSize(210, 118)
+        self.lbl_thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_thumb.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.lbl_thumb.setStyleSheet(f"background-color: {C_INPUT}; border: 1px solid {C_GOLD}; border-radius: 8px; color: {C_DIM};")
+        self.lbl_thumb.mouseReleaseEvent = lambda _e: self._open_zoom()  # type: ignore[method-assign]
+        prev_row.addWidget(self.lbl_thumb)
+
+        prev_row.addStretch(1)
+        self.btn_zoom = QPushButton(tr("btn_zoom"))
+        self.btn_zoom.setObjectName("GhostBtn")
+        self.btn_zoom.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_zoom.setStyleSheet(f"QPushButton {{ background: transparent; color: {C_TEXT_BODY}; font-size: 13.5px; border: none; padding: 8px 14px; }} QPushButton:hover {{ color: {C_GOLD}; }}")
+        self.btn_zoom.clicked.connect(self._open_zoom)
+        prev_row.addWidget(self.btn_zoom)
+        lay.addLayout(prev_row)
+
+        self.desc = QPlainTextEdit()
+        self.desc.setReadOnly(True)
+        self.desc.setPlainText(tr("gb_loading_detail"))
+        self.desc.setStyleSheet(
+            f"QPlainTextEdit {{ background: transparent; color: #ECE7DA; border: none; font-family: {SANS_STACK}; font-size: 14px; line-height: 1.5; padding: 4px 2px; }}"
         )
-        self._inner.pack(fill="both", expand=True)
-        for w in (self, self._inner):
-            w.bind("<Enter>", lambda _e: self._enabled and self._inner.configure(bg=self._hover_bg))
-            w.bind("<Leave>", lambda _e: self._enabled and self._inner.configure(bg=self._bg))
-            w.bind("<ButtonRelease-1>", lambda _e: self._enabled and self._cmd and self._cmd())
+        lay.addWidget(self.desc, 1)
 
-    def set_text(self, text: str) -> None:
-        self._inner.configure(text=text)
+        foot = QHBoxLayout()
+        foot.setSpacing(12)
+        foot.addStretch(1)
 
-    def set_palette(self, bg: str, hover_bg: str, fg: str, border: str) -> None:
-        self._bg = bg
-        self._hover_bg = hover_bg
-        self._fg = fg
-        self.configure(bg=border)
-        if self._enabled:
-            self._inner.configure(bg=bg, fg=fg)
+        btn_close = QPushButton(tr("btn_close"))
+        btn_close.setObjectName("GhostBtn")
+        btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_close.clicked.connect(self.reject)
+        foot.addWidget(btn_close)
 
-    def set_enabled(self, enabled: bool) -> None:
-        self._enabled = enabled
-        self._inner.configure(
-            bg=self._bg if enabled else "#111722",
-            fg=self._fg if enabled else C_DIM,
-            cursor="hand2" if enabled else "arrow",
-        )
-        self.configure(cursor="hand2" if enabled else "arrow")
+        btn_web = QPushButton(tr("btn_open_web"))
+        btn_web.setObjectName("GhostBtn")
+        btn_web.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_web.clicked.connect(lambda: webbrowser.open(mod.profile_url))
+        foot.addWidget(btn_web)
 
+        self.btn_inst = QPushButton(tr("btn_install_ps5"))
+        self.btn_inst.setObjectName("PrimaryGold")
+        self.btn_inst.setMinimumHeight(40)
+        self.btn_inst.setMinimumWidth(148)
+        self.btn_inst.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_inst.clicked.connect(self._install_clicked)
+        foot.addWidget(self.btn_inst)
+        lay.addLayout(foot)
 
-def run_gui() -> int:
-    paths = default_kit_paths()
+        outer.addWidget(frame)
 
-    root = tk.Tk()
-    root.geometry("1160x790")
-    root.minsize(1020, 700)
-    root.configure(bg=C_BG)
-
-    ui_font = _pick_font(root)
-    serif_font = _pick_serif_font(root)
-    mono_font = "JetBrains Mono" if ui_font == "Inter" else "Monospace"
-
-    style = ttk.Style()
-    try:
-        style.theme_use("clam")
-    except tk.TclError:
-        pass
-    style.configure(
-        "Dark.TCombobox",
-        fieldbackground=C_INPUT,
-        background=C_CARD_ALT,
-        foreground=C_TEXT,
-        arrowcolor=C_ACCENT,
-        bordercolor=C_BORDER,
-        lightcolor=C_BORDER,
-        darkcolor=C_BORDER,
-        padding=(8, 5),
-    )
-    style.map(
-        "Dark.TCombobox",
-        fieldbackground=[("readonly", C_INPUT), ("focus", "#101826")],
-        foreground=[("readonly", C_TEXT)],
-        bordercolor=[("focus", C_ACCENT)],
-    )
-    style.configure(
-        "Zonai.Horizontal.TProgressbar",
-        troughcolor=C_INPUT,
-        background=C_ACCENT,
-        bordercolor=C_BG,
-        lightcolor=C_ACCENT,
-        darkcolor=C_ACCENT,
-        thickness=4,
-    )
-    root.option_add("*TCombobox*Listbox.background", C_CARD)
-    root.option_add("*TCombobox*Listbox.foreground", C_TEXT)
-    root.option_add("*TCombobox*Listbox.selectBackground", C_ACCENT)
-    root.option_add("*TCombobox*Listbox.selectForeground", C_ACCENT_TXT)
-
-    # ---- Localization Registry ----
-    lang_code = ["es"]
-    i18n_bindings: list[tuple[object, str, str]] = []  # (widget, key, mode)
-
-    def tr(key: str) -> str:
-        return I18N[lang_code[0]].get(key, key)
-
-    def bind_tr(widget, key: str, mode: str = "text"):
-        i18n_bindings.append((widget, key, mode))
-        val = tr(key)
-        if mode == "modern":
-            widget.set_text(val)
-        elif mode == "sub":
-            widget.configure(text=f"  ·  {val}")
+        if cached_detail is not None:
+            self._apply_detail(cached_detail)
         else:
-            widget.configure(text=val)
+            w = FnWorker(lambda: fetch_mod_detail(mod.mod_id, wip=mod.wip), self)
+            w.done.connect(self._on_fetched)
+            w.failed.connect(lambda _e: self.desc.setPlainText(mod.summary or tr("gb_no_desc")))
+            self._workers.append(w)
+            w.start()
+
+    def _on_fetched(self, detail: object) -> None:
+        if isinstance(detail, GBModDetail):
+            self._on_detail_loaded(detail)
+            self._apply_detail(detail)
+
+    def _apply_detail(self, detail: GBModDetail) -> None:
+        views_lbl = "vistas" if self._is_es else "views"
+        author = detail.author or self._mod.author
+        cat = detail.category or self._mod.category
+        likes = detail.likes or self._mod.likes
+        views = detail.views or self._mod.views
+        self.lbl_meta.setText(f"{author} · {cat}  ·  ♥ {likes:,} · {views:,} {views_lbl}")
+
+        self._files = list(detail.files)
+        self.cb_files.clear()
+        if self._files:
+            for f in self._files:
+                mb = f.size_bytes / (1024 * 1024)
+                self.cb_files.addItem(f"{f.filename} ({mb:.1f} MB)")
+        else:
+            self.cb_files.addItem("Sin archivos descargables" if self._is_es else "No downloadable files")
+
+        self.desc.setPlainText(detail.description or self._mod.summary or self._tr("gb_no_desc"))
+
+        urls = list(detail.gallery_urls)
+        if not urls and self._mod.full_img_url:
+            urls.append(self._mod.full_img_url)
+        elif not urls and self._mod.thumb_url:
+            urls.append(self._mod.thumb_url)
+        self._gallery_urls = urls
+        if urls:
+            w = FnWorker(lambda u=urls[0]: fetch_image_bytes(u, timeout=6), self)
+            w.done.connect(self._on_thumb)
+            self._workers.append(w)
+            w.start()
+
+    def _on_thumb(self, raw: object) -> None:
+        if isinstance(raw, bytes) and raw:
+            pm = QPixmap()
+            if pm.loadFromData(raw):
+                self.lbl_thumb.setText("")
+                self.lbl_thumb.setPixmap(_rounded_pixmap(pm, 208, 116, radius=7))
+
+    def _open_zoom(self) -> None:
+        urls = self._gallery_urls or ([self._mod.full_img_url] if self._mod.full_img_url else [])
+        if urls:
+            GalleryLightboxDialog(self, self._mod.name, urls, 0).exec()
+
+    def _install_clicked(self) -> None:
+        chosen = None
+        idx = self.cb_files.currentIndex()
+        if self._files and 0 <= idx < len(self._files):
+            chosen = self._files[idx]
+        self.accept()
+        self._on_install(self._mod, chosen)
+
+
+# ---- Clean 2-Column Editorial Mod Row (Modeled on oot-din Image 1) ----
+class EditorialModRow(QFrame):
+    open_detail = pyqtSignal(object)
+    install_clicked = pyqtSignal(object)
+
+    def __init__(self, mod: GBMod, install_label: str, cached_pm: QPixmap | None = None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.mod = mod
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setObjectName("ModRow")
+        self.setStyleSheet(
+            "QFrame#ModRow { background: transparent; border: none; border-bottom: 1px solid #1A2333; }"
+            "QFrame#ModRow:hover { background-color: rgba(255, 255, 255, 0.035); }"
+        )
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(8, 10, 8, 10)
+        lay.setSpacing(14)
+
+        self.lbl_thumb = QLabel()
+        self.lbl_thumb.setFixedSize(96, 54)
+        self.lbl_thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_thumb.setStyleSheet(f"background-color: {C_INPUT}; border: 1px solid #1E293B; border-radius: 6px; color: {C_DIM}; font-size: 10px;")
+        if cached_pm is not None:
+            self.lbl_thumb.setPixmap(cached_pm)
+        else:
+            self.lbl_thumb.setText("TOTK")
+        lay.addWidget(self.lbl_thumb)
+
+        col = QVBoxLayout()
+        col.setSpacing(3)
+        short_name = mod.name if len(mod.name) <= 34 else mod.name[:33].rstrip() + "…"
+        lbl_name = QLabel(short_name)
+        lbl_name.setToolTip(mod.name)
+        lbl_name.setWordWrap(False)
+        lbl_name.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        lbl_name.setStyleSheet(f"font-family: {SERIF_STACK}; font-size: 14px; font-weight: 600; color: {C_TEXT};")
+        meta_txt = f"{mod.author} · {mod.category} · ★ {mod.likes}"
+        short_meta = meta_txt if len(meta_txt) <= 38 else meta_txt[:37].rstrip() + "…"
+        lbl_meta = QLabel(short_meta)
+        lbl_meta.setToolTip(meta_txt)
+        lbl_meta.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        lbl_meta.setStyleSheet(f"font-size: 12px; color: {C_MUTED};")
+        col.addWidget(lbl_name)
+        col.addWidget(lbl_meta)
+        lay.addLayout(col, 1)
+
+        btn_inst = QPushButton(install_label)
+        btn_inst.setObjectName("InlineInstall")
+        btn_inst.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_inst.clicked.connect(lambda: self.install_clicked.emit(self.mod))
+        lay.addWidget(btn_inst)
+
+    def set_thumb(self, pm: QPixmap) -> None:
+        self.lbl_thumb.setText("")
+        self.lbl_thumb.setPixmap(pm)
+
+    def mouseReleaseEvent(self, ev) -> None:  # noqa: N802
+        if ev.button() == Qt.MouseButton.LeftButton:
+            self.open_detail.emit(self.mod)
+        super().mouseReleaseEvent(ev)
+
+    def mouseDoubleClickEvent(self, ev) -> None:  # noqa: N802
+        if ev.button() == Qt.MouseButton.LeftButton:
+            self.open_detail.emit(self.mod)
+        super().mouseDoubleClickEvent(ev)
+
+
+# ---- Main Application Window ----
+class PS5TotkWindow(QMainWindow):
+    def __init__(self) -> None:
+        super().__init__()
+        self.paths = default_kit_paths()
+        self.prefs = _load_prefs()
+        self.lang = self.prefs.get("lang", "es")
+        if self.lang not in ("es", "en"):
+            self.lang = "es"
+
+        self.ps5_connected = False
+        self.ps5_mods: list[str] = []
+        self.local_mods: list[str] = []
+        self.gb_all_results: list[GBMod] = []
+        self.gb_detail_cache: dict[tuple[int, bool], GBModDetail] = {}
+        self.gb_thumb_cache: dict[str, QPixmap] = {}
+        self.gb_rows_by_url: dict[str, list[EditorialModRow]] = {}
+        self.gb_cat = "all"
+        self.active_workers: list[QThread] = []
+        self._thumb_worker: ThumbBatchWorker | None = None
+        self._cmd_worker: CommandWorker | None = None
+        self._tr_bindings: list[tuple[QObject, str]] = []
+
+        self.setMinimumSize(1120, 740)
+        self.resize(1340, 860)
+
+        icon_path = self.paths.assets_sce_sys / "icon0.png"
+        if icon_path.is_file():
+            self.setWindowIcon(QIcon(str(icon_path)))
+
+        # Root layout: top 2px Zonai stripe + (Sidebar | Main Column)
+        central = QWidget()
+        self.setCentralWidget(central)
+        root_v = QVBoxLayout(central)
+        root_v.setContentsMargins(0, 0, 0, 0)
+        root_v.setSpacing(0)
+
+        accent_bar = QFrame()
+        accent_bar.setFixedHeight(2)
+        accent_bar.setStyleSheet(f"background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {C_ACCENT}, stop:0.5 {C_GOLD}, stop:1 {C_BLUE});")
+        root_v.addWidget(accent_bar)
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        root_v.addLayout(body, 1)
+
+        # ---- LEFT PLAYSTATION SIDEBAR (Preserved Layout, Crisp PyQt6) ----
+        self.sidebar = QFrame()
+        self.sidebar.setObjectName("Sidebar")
+        self.sidebar.setFixedWidth(274)
+        sb_lay = QVBoxLayout(self.sidebar)
+        sb_lay.setContentsMargins(14, 18, 14, 16)
+        sb_lay.setSpacing(12)
+
+        brand_row = QHBoxLayout()
+        brand_row.setSpacing(12)
+        self.lbl_logo = QLabel()
+        self.lbl_logo.setFixedSize(50, 50)
+        if icon_path.is_file():
+            self.lbl_logo.setPixmap(_rounded_pixmap(QPixmap(str(icon_path)), 50, 50, radius=11))
+        brand_row.addWidget(self.lbl_logo)
+
+        b_col = QVBoxLayout()
+        b_col.setSpacing(2)
+        b_t = QLabel("TOTK PS5")
+        b_t.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {C_TEXT};")
+        b_s = QLabel(f"{TITLE_ID} · PRO")
+        b_s.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {C_GOLD}; letter-spacing: 0.6px;")
+        b_col.addWidget(b_t)
+        b_col.addWidget(b_s)
+        brand_row.addLayout(b_col, 1)
+        sb_lay.addLayout(brand_row)
+
+        # ES | EN Pill Toggle
+        lang_pill = QFrame()
+        lang_pill.setStyleSheet(f"background-color: {C_INPUT}; border: 1px solid {C_BORDER}; border-radius: 7px;")
+        lp_lay = QHBoxLayout(lang_pill)
+        lp_lay.setContentsMargins(2, 2, 2, 2)
+        lp_lay.setSpacing(2)
+        self.btn_es = QPushButton("Español (ES)")
+        self.btn_en = QPushButton("English (EN)")
+        for b_l, code in ((self.btn_es, "es"), (self.btn_en, "en")):
+            b_l.setCursor(Qt.CursorShape.PointingHandCursor)
+            b_l.setFixedHeight(30)
+            b_l.clicked.connect(lambda _checked=False, c=code: self.apply_language(c))
+            lp_lay.addWidget(b_l)
+        sb_lay.addWidget(lang_pill)
+
+        sep = QFrame()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background-color: #1D283A;")
+        sb_lay.addWidget(sep)
+
+        # Navigation (△ ○ × □)
+        self.nav_items: dict[str, SidebarNavItem] = {}
+        nav_specs = [
+            ("build", "triangle", C_ACCENT, "nav_build_t", "nav_build_s"),
+            ("mods", "circle", C_CORAL, "nav_mods_t", "nav_mods_s"),
+            ("ftp", "cross", C_BLUE, "nav_ftp_t", "nav_ftp_s"),
+            ("layout", "square", C_VIOLET, "nav_layout_t", "nav_layout_s"),
+        ]
+        for key, shape, color, tk_k, sk_k in nav_specs:
+            item = SidebarNavItem(shape, color, self.tr_key(tk_k), self.tr_key(sk_k))
+            item.clicked.connect(lambda k=key: self.select_page(k))
+            sb_lay.addWidget(item)
+            self.nav_items[key] = item
+
+        sb_lay.addStretch(1)
+
+        # Bottom Status Card
+        st_card = QFrame()
+        st_card.setObjectName("StatusCard")
+        st_lay = QVBoxLayout(st_card)
+        st_lay.setContentsMargins(14, 12, 14, 12)
+        st_lay.setSpacing(6)
+        self.lbl_status_dot = QLabel(self.tr_key("status_ready"))
+        self.lbl_status_dot.setStyleSheet(f"font-size: 12.5px; font-weight: 700; color: {C_ACCENT};")
+        self.lbl_status_sub = QLabel(self.tr_key("status_sub"))
+        self.lbl_status_sub.setStyleSheet(f"font-size: 11px; color: {C_DIM};")
+        self.btn_sb_conn = QPushButton(f"🔌  {self.tr_key('btn_connect_ps5')}")
+        self.btn_sb_conn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_sb_conn.setStyleSheet(
+            f"QPushButton {{ background-color: rgba(56, 189, 248, 0.12); color: {C_BLUE}; border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 6px; padding: 5px 10px; font-size: 11.5px; font-weight: 700; }}"
+            "QPushButton:hover { background-color: rgba(56, 189, 248, 0.22); }"
+        )
+        self.btn_sb_conn.clicked.connect(lambda: self.open_ps5_connect_modal(startup=False))
+        st_lay.addWidget(self.lbl_status_dot)
+        st_lay.addWidget(self.lbl_status_sub)
+        st_lay.addWidget(self.btn_sb_conn)
+        sb_lay.addWidget(st_card)
+
+        body.addWidget(self.sidebar)
+
+        # ---- MAIN WORKSPACE COLUMN ----
+        main_w = QWidget()
+        main_lay = QVBoxLayout(main_w)
+        main_lay.setContentsMargins(0, 0, 0, 0)
+        main_lay.setSpacing(0)
+        body.addWidget(main_w, 1)
+
+        self.stack = QStackedWidget()
+        main_lay.addWidget(self.stack, 1)
+
+        self._page_indices: dict[str, int] = {}
+        self._build_page_build()
+        self._build_page_mods()
+        self._build_page_ftp()
+        self._build_page_layout()
+
+        # ---- BOTTOM CONSOLE & ACTION DOCK (hidden on Mods page for full browser height) ----
+        self.dock = QFrame()
+        self.dock.setStyleSheet("QFrame { background-color: #090D14; border-top: 1px solid #1A2436; }")
+        dock_lay = QVBoxLayout(self.dock)
+        dock_lay.setContentsMargins(28, 12, 28, 14)
+        dock_lay.setSpacing(10)
+
+        self.pbar = QProgressBar()
+        self.pbar.setRange(0, 1)
+        self.pbar.setValue(0)
+        self.pbar.setTextVisible(False)
+        dock_lay.addWidget(self.pbar)
+
+        self.log_box = QPlainTextEdit()
+        self.log_box.setObjectName("Terminal")
+        self.log_box.setReadOnly(True)
+        self.log_box.setFixedHeight(112)
+        dock_lay.addWidget(self.log_box)
+
+        btn_bar = QHBoxLayout()
+        btn_bar.setSpacing(10)
+        self.btn_check = self._bind_tr(QPushButton(), "btn_check")
+        self.btn_check.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_check.clicked.connect(
+            lambda: self.run_cmd_async([str(self.paths.python_bin), "-P", "-u", "-m", "builder.cli", "--check"], self.tr_key("btn_check"))
+        )
+        self.btn_ftp_only = self._bind_tr(QPushButton(), "btn_ftp_only")
+        self.btn_ftp_only.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_ftp_only.clicked.connect(self._run_ftp_only)
+
+        self.btn_build = self._bind_tr(QPushButton(), "btn_build")
+        self.btn_build.setObjectName("PrimaryEmerald")
+        self.btn_build.setMinimumHeight(40)
+        self.btn_build.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_build.clicked.connect(self._run_build_only)
+
+        self.btn_both = self._bind_tr(QPushButton(), "btn_both")
+        self.btn_both.setObjectName("PrimaryBlue")
+        self.btn_both.setMinimumHeight(40)
+        self.btn_both.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_both.clicked.connect(self._run_build_and_ftp)
+
+        btn_bar.addWidget(self.btn_check)
+        btn_bar.addWidget(self.btn_ftp_only)
+        btn_bar.addStretch(1)
+        btn_bar.addWidget(self.btn_build)
+        btn_bar.addWidget(self.btn_both)
+        dock_lay.addLayout(btn_bar)
+        main_lay.addWidget(self.dock)
+
+        self.action_buttons = [self.btn_check, self.btn_ftp_only, self.btn_build, self.btn_both]
+
+        self.apply_language(self.lang)
+        self.select_page("build")
+        self.append_log(self.tr_key("welcome"))
+
+        # Prompt to connect to PS5 right after window opens
+        QTimer.singleShot(280, lambda: self.open_ps5_connect_modal(startup=True))
+
+    # ---- Helpers ----
+    def tr_key(self, key: str) -> str:
+        return I18N[self.lang].get(key, key)
+
+    def _bind_tr(self, widget: QObject, key: str):
+        self._tr_bindings.append((widget, key))
+        if hasattr(widget, "setText"):
+            widget.setText(self.tr_key(key))  # type: ignore[attr-defined]
         return widget
 
-    # ---- Shared State (ZERO hardcoded personal paths or IPs) ----
-    vars_map: dict[str, tk.StringVar] = {
-        "game": tk.StringVar(value=""),
-        "update": tk.StringVar(value=""),
-        "keys": tk.StringVar(value=""),
-        "exefs": tk.StringVar(value=""),
-        "romfs": tk.StringVar(value=""),
-        "shaders": tk.StringVar(value=""),
-        "out": tk.StringVar(value=str(Path.home() / "TOTK-PS5-Out")),
-        "res": tk.StringVar(value="2560x1440"),
-        "hz": tk.StringVar(value="120"),
-        "frame_gen": tk.StringVar(value="fsr3"),
-        "scale": tk.StringVar(value="75"),
-        "lang": tk.StringVar(value="es-419"),
-        "ftp_host": tk.StringVar(value=""),
-        "ftp_port": tk.StringVar(value="2121"),
-        "gb_query": tk.StringVar(value=""),
-        "gb_sort": tk.StringVar(value="default"),
-        "gb_cat": tk.StringVar(value="all"),
-        "art_url": tk.StringVar(value=""),
-    }
-    bool_map: dict[str, tk.BooleanVar] = {
-        "prompts": tk.BooleanVar(value=True),
-        "pretranslate_shaders": tk.BooleanVar(value=True),
-        "ftp_romfs": tk.BooleanVar(value=False),
-        "ftp_shaders": tk.BooleanVar(value=True),
-        "ftp_ini": tk.BooleanVar(value=True),
-    }
+    def _wrap_scroll_page(self, max_width: int = 1040) -> tuple[QScrollArea, QVBoxLayout]:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.viewport().setStyleSheet(f"background-color: {C_BG};")
+        outer = QWidget()
+        outer.setObjectName("ScrollCanvas")
+        outer.setStyleSheet(f"QWidget#ScrollCanvas {{ background-color: {C_BG}; }}")
+        outer_lay = QHBoxLayout(outer)
+        outer_lay.setContentsMargins(32, 24, 32, 24)
+        outer_lay.setSpacing(0)
 
-    # ---- Shell: Sidebar + Hairline + Main Workspace ----
-    # Top 2px Zonai emerald-gold accent stripe
-    top_bar = tk.Frame(root, bg=C_ACCENT, height=2)
-    top_bar.pack(fill="x")
+        content = QWidget()
+        if max_width > 0:
+            content.setMaximumWidth(max_width)
+        lay = QVBoxLayout(content)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(16)
 
-    shell = tk.Frame(root, bg=C_BG)
-    shell.pack(fill="both", expand=True)
+        outer_lay.addWidget(content, 1)
+        if max_width > 0:
+            outer_lay.addStretch(0)
+        scroll.setWidget(outer)
+        return scroll, lay
 
-    sidebar = tk.Frame(shell, bg=C_SIDEBAR, width=254)
-    sidebar.pack(side="left", fill="y")
-    sidebar.pack_propagate(False)
-    tk.Frame(shell, bg=C_BORDER, width=1).pack(side="left", fill="y")
+    def _make_card(self, title_key: str, sub_key: str) -> tuple[QFrame, QVBoxLayout]:
+        card = QFrame()
+        card.setObjectName("EditorialCard")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(20, 18, 20, 18)
+        lay.setSpacing(12)
 
-    main_col = tk.Frame(shell, bg=C_BG)
-    main_col.pack(side="left", fill="both", expand=True)
+        hdr = QHBoxLayout()
+        hdr.setSpacing(10)
+        t = self._bind_tr(QLabel(), title_key)
+        t.setObjectName("CardTitle")
+        s = self._bind_tr(QLabel(), sub_key)
+        s.setObjectName("CardSub")
+        hdr.addWidget(t)
+        hdr.addWidget(s, 1)
+        lay.addLayout(hdr)
+        return card, lay
 
-    # ---- Sidebar Brand + ES/EN Pill Switcher ----
-    brand = tk.Frame(sidebar, bg=C_SIDEBAR, padx=18, pady=18)
-    brand.pack(fill="x")
+    def _make_path_field(self, label_key: str, *, default: str = "", pick_dir: bool = False, filt: str = "") -> tuple[QWidget, QLineEdit]:
+        box = QWidget()
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(5)
 
-    logo_img = _load_logo(paths.assets_sce_sys / "icon0.png", size=50)
-    logo_lbl = tk.Label(brand, bg=C_SIDEBAR)
-    if logo_img is not None:
-        logo_lbl.configure(image=logo_img)
-        logo_lbl.image = logo_img  # type: ignore[attr-defined]
-        logo_lbl.pack(side="left", padx=(0, 12))
+        lbl = self._bind_tr(QLabel(), label_key)
+        lbl.setObjectName("FieldLabel")
+        lay.addWidget(lbl)
 
-    brand_txt = tk.Frame(brand, bg=C_SIDEBAR)
-    brand_txt.pack(side="left", fill="x", expand=True)
-    tk.Label(brand_txt, text="TOTK PS5", bg=C_SIDEBAR, fg=C_TEXT, font=(ui_font, 14, "bold"), anchor="w").pack(fill="x")
-    tk.Label(
-        brand_txt, text=f"{TITLE_ID}  ·  PRO", bg=C_SIDEBAR, fg=C_GOLD, font=(ui_font, 8, "bold"), anchor="w"
-    ).pack(fill="x", pady=(2, 0))
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        ed = QLineEdit(default)
+        ed.setMinimumHeight(38)
+        btn = self._bind_tr(QPushButton(), "btn_browse")
+        btn.setMinimumHeight(38)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
 
-    # Sleek ES | EN language switcher pill
-    lang_bar = tk.Frame(sidebar, bg=C_SIDEBAR, padx=16, pady=4)
-    lang_bar.pack(fill="x")
-    pill = tk.Frame(lang_bar, bg=C_BORDER, padx=1, pady=1)
-    pill.pack(fill="x")
-    pill_in = tk.Frame(pill, bg=C_INPUT)
-    pill_in.pack(fill="x")
-    btn_es = tk.Label(pill_in, text="Español (ES)", font=(ui_font, 8, "bold"), pady=5, cursor="hand2")
-    btn_en = tk.Label(pill_in, text="English (EN)", font=(ui_font, 8, "bold"), pady=5, cursor="hand2")
-    btn_es.pack(side="left", fill="x", expand=True)
-    btn_en.pack(side="left", fill="x", expand=True)
-
-    def apply_language(code: str) -> None:
-        lang_code[0] = code
-        root.title(tr("win_title"))
-        btn_es.configure(
-            bg=C_ACCENT if code == "es" else C_INPUT,
-            fg=C_ACCENT_TXT if code == "es" else C_MUTED,
-        )
-        btn_en.configure(
-            bg=C_ACCENT if code == "en" else C_INPUT,
-            fg=C_ACCENT_TXT if code == "en" else C_MUTED,
-        )
-        for w, key, mode in i18n_bindings:
-            val = tr(key)
-            if mode == "modern":
-                w.set_text(val)  # type: ignore[attr-defined]
-            elif mode == "sub":
-                w.configure(text=f"  ·  {val}")  # type: ignore[attr-defined]
+        def _pick() -> None:
+            if pick_dir:
+                p = QFileDialog.getExistingDirectory(self, self.tr_key(label_key), ed.text() or str(Path.home()))
             else:
-                w.configure(text=val)  # type: ignore[attr-defined]
-        try:
-            _refresh_cat_pills()
-            _update_installed_tab_label()
-        except Exception:
-            pass
+                p, _ = QFileDialog.getOpenFileName(self, self.tr_key(label_key), ed.text() or str(Path.home()), filt or "All Files (*)")
+            if p:
+                ed.setText(p)
 
-    btn_es.bind("<ButtonRelease-1>", lambda _e: apply_language("es"))
-    btn_en.bind("<ButtonRelease-1>", lambda _e: apply_language("en"))
-
-    tk.Frame(sidebar, bg=C_BORDER, height=1).pack(fill="x", padx=16, pady=(12, 12))
-
-    # ---- Sidebar PlayStation Navigation (△ ○ × □) ----
-    nav_specs = [
-        ("build", "triangle", C_ACCENT, "nav_build_t", "nav_build_s"),
-        ("mods", "circle", C_CORAL, "nav_mods_t", "nav_mods_s"),
-        ("ftp", "cross", C_BLUE, "nav_ftp_t", "nav_ftp_s"),
-        ("layout", "square", C_VIOLET, "nav_layout_t", "nav_layout_s"),
-    ]
-    nav_nodes: dict[str, dict] = {}
-    pages: dict[str, tk.Frame] = {}
-
-    def select_page(key: str) -> None:
-        for k, p in pages.items():
-            if k == key:
-                p.pack(fill="both", expand=True)
-            else:
-                p.pack_forget()
-        for k, n in nav_nodes.items():
-            active = k == key
-            bg_c = "#172235" if active else C_SIDEBAR
-            n["row"].configure(bg=bg_c)
-            n["bar"].configure(bg=n["color"] if active else bg_c)
-            n["inner"].configure(bg=bg_c)
-            n["txts"].configure(bg=bg_c)
-            n["tl"].configure(bg=bg_c, fg=C_TEXT if active else C_MUTED)
-            n["sl"].configure(bg=bg_c, fg=C_MUTED if active else C_DIM)
-            _draw_ps_symbol(n["cv"], n["shape"], n["color"] if active else C_DIM, bg_c)
-        if key == "mods":
-            dock.pack_forget()
-            if not gb_all_results:
-                root.after(50, _run_gb_search)
-        else:
-            if not dock.winfo_manager():
-                dock.pack(side="bottom", fill="x")
-
-    for key, shape, color, tk_key, sk_key in nav_specs:
-        row = tk.Frame(sidebar, bg=C_SIDEBAR, cursor="hand2")
-        row.pack(fill="x", padx=10, pady=3)
-        bar = tk.Frame(row, bg=C_SIDEBAR, width=3)
-        bar.pack(side="left", fill="y", pady=5)
-        inner = tk.Frame(row, bg=C_SIDEBAR, padx=10, pady=9)
-        inner.pack(side="left", fill="both", expand=True)
-        cv = tk.Canvas(inner, width=24, height=24, bg=C_SIDEBAR, highlightthickness=0, cursor="hand2")
-        cv.pack(side="left", padx=(0, 10))
-        txts = tk.Frame(inner, bg=C_SIDEBAR)
-        txts.pack(side="left", fill="x", expand=True)
-        tl = bind_tr(tk.Label(txts, bg=C_SIDEBAR, fg=C_MUTED, font=(ui_font, 10, "bold"), anchor="w"), tk_key)
-        tl.pack(fill="x")
-        sl = bind_tr(tk.Label(txts, bg=C_SIDEBAR, fg=C_DIM, font=(ui_font, 8), anchor="w"), sk_key)
-        sl.pack(fill="x")
-
-        nav_nodes[key] = {
-            "row": row,
-            "bar": bar,
-            "inner": inner,
-            "cv": cv,
-            "txts": txts,
-            "tl": tl,
-            "sl": sl,
-            "shape": shape,
-            "color": color,
-        }
-        for w in (row, bar, inner, cv, txts, tl, sl):
-            w.bind("<ButtonRelease-1>", lambda _e, k=key: select_page(k))
-
-    # ---- Sidebar Bottom Status Card ----
-    side_foot = tk.Frame(sidebar, bg=C_SIDEBAR, padx=14, pady=14)
-    side_foot.pack(side="bottom", fill="x")
-    status_card = tk.Frame(side_foot, bg=C_CARD, highlightbackground=C_BORDER, highlightthickness=1, padx=12, pady=10)
-    status_card.pack(fill="x")
-    status_dot = bind_tr(
-        tk.Label(status_card, bg=C_CARD, fg=C_ACCENT, font=(ui_font, 9, "bold"), anchor="w"),
-        "status_ready",
-    )
-    status_dot.pack(fill="x")
-    bind_tr(
-        tk.Label(status_card, bg=C_CARD, fg=C_DIM, font=(ui_font, 8), justify="left", anchor="w"),
-        "status_sub",
-    ).pack(fill="x", pady=(4, 0))
-
-    # ---- Page Host ----
-    page_host = tk.Frame(main_col, bg=C_BG, padx=22, pady=14)
-    page_host.pack(fill="both", expand=True)
-
-    def make_card(parent: tk.Widget, title_key: str, sub_key: str = "") -> tk.Frame:
-        wrap = tk.Frame(parent, bg=C_CARD, highlightbackground=C_BORDER, highlightthickness=1, padx=16, pady=11)
-        wrap.pack(fill="x", pady=(0, 10))
-        hdr = tk.Frame(wrap, bg=C_CARD)
-        hdr.pack(fill="x", pady=(0, 7))
-        bind_tr(tk.Label(hdr, bg=C_CARD, fg=C_TEXT, font=(ui_font, 10, "bold")), title_key).pack(side="left")
-        if sub_key:
-            bind_tr(tk.Label(hdr, bg=C_CARD, fg=C_DIM, font=(ui_font, 8)), sub_key, mode="sub").pack(side="left")
-        body = tk.Frame(wrap, bg=C_CARD)
-        body.pack(fill="x")
-        return body
-
-    def make_input_row(parent: tk.Frame, row_idx: int, label_key: str, key: str, is_dir: bool) -> None:
-        bind_tr(
-            tk.Label(parent, bg=C_CARD, fg=C_MUTED, font=(ui_font, 9), anchor="w", width=22), label_key
-        ).grid(row=row_idx, column=0, sticky="w", pady=3)
-        ent_wrap = tk.Frame(parent, bg=C_BORDER, padx=1, pady=1)
-        ent_wrap.grid(row=row_idx, column=1, sticky="ew", padx=(8, 8), pady=3)
-        ent = tk.Entry(
-            ent_wrap, textvariable=vars_map[key], bg=C_INPUT, fg=C_TEXT, insertbackground=C_ACCENT, relief="flat", font=(ui_font, 9)
-        )
-        ent.pack(fill="x", ipady=4, padx=6)
-        ent.bind("<FocusIn>", lambda _e, w=ent_wrap: w.configure(bg=C_ACCENT))
-        ent.bind("<FocusOut>", lambda _e, w=ent_wrap: w.configure(bg=C_BORDER))
-
-        def pick() -> None:
-            chosen = filedialog.askdirectory() if is_dir else filedialog.askopenfilename()
-            if chosen:
-                vars_map[key].set(chosen)
-
-        b = ModernButton(parent, tr("btn_browse"), pick, font_spec=(ui_font, 8, "bold"), padx=10, pady=4)
-        bind_tr(b, "btn_browse", mode="modern")
-        b.grid(row=row_idx, column=2, pady=3)
+        btn.clicked.connect(_pick)
+        row.addWidget(ed, 1)
+        row.addWidget(btn)
+        lay.addLayout(row)
+        return box, ed
 
     # ================ PAGE 1: BUILD & SHADERS ================
-    p_build = tk.Frame(page_host, bg=C_BG)
-    pages["build"] = p_build
-
-    bind_tr(tk.Label(p_build, bg=C_BG, fg=C_TEXT, font=(ui_font, 15, "bold"), anchor="w"), "p_build_h").pack(fill="x")
-    bind_tr(tk.Label(p_build, bg=C_BG, fg=C_MUTED, font=(ui_font, 9), anchor="w"), "p_build_s").pack(fill="x", pady=(2, 10))
-
-    c_src = make_card(p_build, "c_src_t", "c_src_s")
-    c_src.columnconfigure(1, weight=1)
-    make_input_row(c_src, 0, "lbl_game", "game", False)
-    make_input_row(c_src, 1, "lbl_update", "update", False)
-    make_input_row(c_src, 2, "lbl_keys", "keys", False)
-    make_input_row(c_src, 3, "lbl_exefs", "exefs", True)
-    make_input_row(c_src, 4, "lbl_romfs", "romfs", True)
-    make_input_row(c_src, 5, "lbl_shaders", "shaders", True)
-    make_input_row(c_src, 6, "lbl_out", "out", True)
-
-    c_opt = make_card(p_build, "c_opt_t", "c_opt_s")
-    toggles = tk.Frame(c_opt, bg=C_CARD)
-    toggles.pack(fill="x", pady=(0, 8))
-    for k_txt, bkey in (("chk_prompts", "prompts"), ("chk_shaders", "pretranslate_shaders")):
-        cb = tk.Checkbutton(
-            toggles,
-            variable=bool_map[bkey],
-            bg=C_CARD,
-            fg=C_TEXT,
-            selectcolor=C_INPUT,
-            activebackground=C_CARD,
-            activeforeground=C_ACCENT,
-            highlightthickness=0,
-            font=(ui_font, 9),
-            cursor="hand2",
-        )
-        bind_tr(cb, k_txt)
-        cb.pack(side="left", padx=(0, 22))
-
-    presets = tk.Frame(c_opt, bg=C_CARD)
-    presets.pack(fill="x")
-    for k_lbl, vkey, vals, w in (
-        ("lbl_res", "res", ("2560x1440", "1920x1080", "3840x2160"), 11),
-        ("lbl_hz", "hz", ("120", "60"), 5),
-        ("lbl_fg", "frame_gen", ("off", "fsr3"), 6),
-        ("lbl_scale", "scale", ("75", "67", "game", "100"), 6),
-        ("lbl_lang", "lang", ("es-419", "es-ES", "en-US", "fr-FR", "de-DE", "ja-JP"), 7),
-    ):
-        cell = tk.Frame(presets, bg=C_CARD)
-        cell.pack(side="left", padx=(0, 14))
-        bind_tr(tk.Label(cell, bg=C_CARD, fg=C_DIM, font=(ui_font, 8, "bold"), anchor="w"), k_lbl).pack(fill="x", pady=(0, 3))
-        ttk.Combobox(cell, textvariable=vars_map[vkey], values=vals, width=w, state="readonly", style="Dark.TCombobox").pack()
-
-    # ================ PAGE 2: MODS & GAMEBANANA (EDITORIAL TOTK EDITION) ================
-    p_mods = tk.Frame(page_host, bg=C_BG)
-    pages["mods"] = p_mods
-
-    # Console log queue & shared PS5 connection state
-    q: queue.Queue[str | None] = queue.Queue()
-    ps5_connected = [False]
-    ps5_mods_count = [0]
-    gb_all_results: list[GBMod] = []
-    gb_results: list[GBMod] = []
-    gb_detail_cache: dict[tuple[int, bool], GBModDetail] = {}
-    gb_photo_cache: dict[str, ImageTk.PhotoImage] = {}
-    gb_search_seq = [0]
-
-    def _bytes_to_tk_photo(raw: bytes | None, size: tuple[int, int]) -> ImageTk.PhotoImage | None:
-        if not raw:
-            return None
-        try:
-            im = Image.open(io.BytesIO(raw)).convert("RGB")
-            im.thumbnail(size, Image.Resampling.LANCZOS)
-            bg = Image.new("RGB", size, (11, 16, 24))
-            ox = (size[0] - im.width) // 2
-            oy = (size[1] - im.height) // 2
-            bg.paste(im, (ox, oy))
-            return ImageTk.PhotoImage(bg)
-        except Exception:
-            return None
-
-    def _update_installed_tab_label() -> None:
-        is_es = lang_code[0] == "es"
-        base = "Tus Mods" if is_es else "Your Mods"
-        local_n = 0
-        try:
-            local_n = mods_list.size()
-        except Exception:
-            pass
-        b_sub_inst.set_text(f"📦  {base} ({ps5_mods_count[0]}/{local_n})")
-
-    def _open_ps5_connect_modal(startup: bool = False, on_connected=None) -> None:
-        dlg = tk.Toplevel(root)
-        is_es = lang_code[0] == "es"
-        dlg.title("Conectar a PS5 (ftpsrv)" if is_es else "Connect to PS5 (ftpsrv)")
-        dlg.configure(bg=C_BG)
-        dlg.geometry("460x285")
-        dlg.transient(root)
-        dlg.grab_set()
-
-        card = tk.Frame(dlg, bg=C_CARD, highlightbackground=C_ACCENT, highlightthickness=1, padx=20, pady=18)
-        card.pack(fill="both", expand=True, padx=14, pady=14)
-        tk.Label(
-            card,
-            text="Conectar a tu PS5" if is_es else "Connect to your PS5",
-            bg=C_CARD,
-            fg=C_TEXT,
-            font=(serif_font, 15, "bold"),
-            anchor="w",
-        ).pack(fill="x")
-        tk.Label(
-            card,
-            text=(
-                "Abre ftpsrv en tu PS5 para consultar e instalar mods directamente."
-                if is_es
-                else "Start ftpsrv on your PS5 to browse and install mods directly."
-            ),
-            bg=C_CARD,
-            fg=C_MUTED,
-            font=(ui_font, 9),
-            anchor="w",
-            wraplength=390,
-            justify="left",
-        ).pack(fill="x", pady=(4, 14))
-
-        row = tk.Frame(card, bg=C_CARD)
-        row.pack(fill="x", pady=(0, 10))
-        tk.Label(row, text="IP PS5:", bg=C_CARD, fg=C_GOLD, font=(ui_font, 9, "bold")).pack(side="left", padx=(0, 8))
-        ip_w = tk.Frame(row, bg=C_BORDER, padx=1, pady=1)
-        ip_w.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        ip_e = tk.Entry(ip_w, textvariable=vars_map["ftp_host"], bg=C_INPUT, fg=C_TEXT, insertbackground=C_ACCENT, relief="flat", font=(ui_font, 10))
-        ip_e.pack(fill="x", ipady=5, padx=8)
-        tk.Label(row, text="Port:", bg=C_CARD, fg=C_MUTED, font=(ui_font, 9, "bold")).pack(side="left", padx=(0, 6))
-        pt_w = tk.Frame(row, bg=C_BORDER, padx=1, pady=1)
-        pt_w.pack(side="left")
-        tk.Entry(pt_w, textvariable=vars_map["ftp_port"], width=6, bg=C_INPUT, fg=C_TEXT, insertbackground=C_ACCENT, relief="flat", font=(ui_font, 10)).pack(ipady=5, padx=6)
-
-        msg_lbl = tk.Label(card, text="", bg=C_CARD, fg=C_DANGER, font=(ui_font, 8, "bold"), anchor="w")
-        msg_lbl.pack(fill="x", pady=(0, 10))
-
-        btns = tk.Frame(card, bg=C_CARD)
-        btns.pack(fill="x", side="bottom")
-
-        def _try_connect() -> None:
-            host = vars_map["ftp_host"].get().strip()
-            if not host:
-                msg_lbl.configure(text="Ingresa la IP local de tu PS5." if is_es else "Enter your PS5 local IP.", fg=C_DANGER)
-                return
-            port = int(vars_map["ftp_port"].get().strip() or "2121")
-            msg_lbl.configure(text="Conectando..." if is_es else "Connecting...", fg=C_GOLD)
-
-            def worker() -> None:
-                try:
-                    dep = PS5Deployer(host, port, timeout=6, log_fn=lambda m: q.put(m + "\n"))
-                    try:
-                        dirs = dep.list_dirs("/data/totk-ps5/mods")
-                    finally:
-                        dep.close()
-
-                    def _ok() -> None:
-                        ps5_connected[0] = True
-                        ps5_mods_count[0] = len(dirs)
-                        try:
-                            ps5_mods_list.delete(0, "end")
-                            for dn in dirs:
-                                ps5_mods_list.insert("end", dn)
-                        except Exception:
-                            pass
-                        _update_installed_tab_label()
-                        status_dot.configure(text=f"●  PS5 Conectada ({host})" if is_es else f"●  PS5 Connected ({host})", fg=C_ACCENT)
-                        if dlg.winfo_exists():
-                            dlg.destroy()
-                        if on_connected:
-                            on_connected()
-
-                    root.after(0, _ok)
-                except Exception as exc:
-                    root.after(0, lambda e=str(exc): dlg.winfo_exists() and msg_lbl.configure(text=f"Error: {e[:55]}", fg=C_DANGER))
-
-            threading.Thread(target=worker, daemon=True).start()
-
-        ip_e.bind("<Return>", lambda _e: _try_connect())
-        ModernButton(
-            btns,
-            ("Continuar sin PS5" if startup else tr("btn_cancel")) if is_es else ("Continue Offline" if startup else tr("btn_cancel")),
-            dlg.destroy,
-            padx=12,
-            pady=6,
-        ).pack(side="right")
-        ModernButton(
-            btns,
-            "🔌  Conectar" if is_es else "🔌  Connect",
-            _try_connect,
-            bg=C_ACCENT,
-            hover_bg=C_ACCENT_HOV,
-            fg=C_ACCENT_TXT,
-            border=C_ACCENT,
-            padx=14,
-            pady=6,
-        ).pack(side="right", padx=(0, 8))
-        ip_e.focus_set()
-
-    # Top Editorial Header (TOTK Serif + Subtitle + Search on right)
-    mods_hdr = tk.Frame(p_mods, bg=C_BG)
-    mods_hdr.pack(fill="x", pady=(0, 8))
-    mods_hdr_l = tk.Frame(mods_hdr, bg=C_BG)
-    mods_hdr_l.pack(side="left", fill="x", expand=True)
-    bind_tr(tk.Label(mods_hdr_l, bg=C_BG, fg=C_GOLD, font=(serif_font, 9, "italic"), anchor="w"), "p_mods_s").pack(fill="x")
-    tk.Label(
-        mods_hdr_l,
-        text="Mods · Tears of the Kingdom",
-        bg=C_BG,
-        fg=C_TEXT,
-        font=(serif_font, 19, "bold"),
-        anchor="w",
-    ).pack(fill="x")
-
-    # Right-aligned sleek search + sort
-    search_box = tk.Frame(mods_hdr, bg=C_BG)
-    search_box.pack(side="right", anchor="s")
-    gb_ent_wrap = tk.Frame(search_box, bg=C_BORDER, padx=1, pady=1)
-    gb_ent_wrap.pack(side="left", padx=(0, 6))
-    gb_ent = tk.Entry(
-        gb_ent_wrap, textvariable=vars_map["gb_query"], width=22, bg=C_INPUT, fg=C_TEXT, insertbackground=C_ACCENT, relief="flat", font=(ui_font, 9)
-    )
-    gb_ent.pack(ipady=5, padx=8)
-    gb_ent.bind("<FocusIn>", lambda _e: gb_ent_wrap.configure(bg=C_GOLD))
-    gb_ent.bind("<FocusOut>", lambda _e: gb_ent_wrap.configure(bg=C_BORDER))
-
-    ttk.Combobox(
-        search_box, textvariable=vars_map["gb_sort"], values=("default", "new", "updated"), width=8, state="readonly", style="Dark.TCombobox"
-    ).pack(side="left", padx=(0, 6))
-
-    # Sub-tabs row + Category pills with live counts
-    mods_sub_bar = tk.Frame(p_mods, bg=C_BG)
-    mods_sub_bar.pack(fill="x", pady=(0, 6))
-    mods_sub_stack = tk.Frame(p_mods, bg=C_BG)
-    mods_sub_stack.pack(fill="both", expand=True)
-
-    p_gb_browse = tk.Frame(mods_sub_stack, bg=C_BG)
-    p_gb_installed = tk.Frame(mods_sub_stack, bg=C_BG)
-
-    sub_btns: dict[str, ModernButton] = {}
-
-    def _select_mods_sub(which: str) -> None:
-        for k_sub, frm in (("browse", p_gb_browse), ("installed", p_gb_installed)):
-            frm.pack_forget()
-            if k_sub == which:
-                frm.pack(fill="both", expand=True)
-        for k_sub, btn in sub_btns.items():
-            if k_sub == which:
-                btn.set_palette("#1F2A3C", "#29374F", C_GOLD, C_GOLD)
-            else:
-                btn.set_palette(C_BG, C_CARD, C_MUTED, C_BG)
-
-    b_sub_browse = ModernButton(mods_sub_bar, tr("tab_gb_browse"), lambda: _select_mods_sub("browse"), font_spec=(ui_font, 9, "bold"), padx=12, pady=4)
-    bind_tr(b_sub_browse, "tab_gb_browse", mode="modern")
-    b_sub_browse.pack(side="left", padx=(0, 8))
-    sub_btns["browse"] = b_sub_browse
-
-    b_sub_inst = ModernButton(mods_sub_bar, tr("tab_gb_installed"), lambda: _select_mods_sub("installed"), font_spec=(ui_font, 9, "bold"), padx=12, pady=4)
-    b_sub_inst.pack(side="left", padx=(0, 10))
-    sub_btns["installed"] = b_sub_inst
-
-    b_ps5_pill = ModernButton(
-        mods_sub_bar,
-        "🔌  PS5 FTP",
-        lambda: _open_ps5_connect_modal(startup=False),
-        bg=C_CARD,
-        hover_bg=C_CARD_ALT,
-        fg=C_BLUE,
-        border=C_BORDER,
-        font_spec=(ui_font, 8, "bold"),
-        padx=10,
-        pady=4,
-    )
-    b_ps5_pill.pack(side="right")
-
-    # Category bar with live counts (Todos (N), Gameplay (N), ...)
-    gb_cat_bar = tk.Frame(p_gb_browse, bg=C_BG)
-    gb_cat_bar.pack(fill="x", pady=(0, 6))
-    cat_btns: dict[str, ModernButton] = {}
-
-    def _refresh_cat_pills() -> None:
-        cur = vars_map["gb_cat"].get()
-        is_es = lang_code[0] == "es"
-        for key_c, es_l, en_l in GB_CATEGORIES:
-            cnt = sum(1 for m in gb_all_results if match_category(m, key_c)) if gb_all_results else 0
-            label = f"{es_l if is_es else en_l} ({cnt})" if gb_all_results else (es_l if is_es else en_l)
-            btn = cat_btns[key_c]
-            btn.set_text(label)
-            if key_c == cur:
-                btn.set_palette("#1F2937", "#293548", C_GOLD, C_GOLD)
-            else:
-                btn.set_palette(C_BG, C_CARD, C_MUTED, C_BG)
-
-    # 2-Column Editorial Scrollable Grid (no boxy WinForms borders!)
-    gb_list_outer = tk.Frame(p_gb_browse, bg=C_BG)
-    gb_list_outer.pack(fill="both", expand=True)
-
-    gb_canvas = tk.Canvas(gb_list_outer, bg=C_BG, highlightthickness=0, bd=0)
-    gb_scroll = ttk.Scrollbar(gb_list_outer, orient="vertical", command=gb_canvas.yview)
-    gb_cards_host = tk.Frame(gb_canvas, bg=C_BG)
-    gb_cards_host.bind("<Configure>", lambda _e: gb_canvas.configure(scrollregion=gb_canvas.bbox("all")))
-    gb_win_id = gb_canvas.create_window((0, 0), window=gb_cards_host, anchor="nw")
-    gb_canvas.bind("<Configure>", lambda e: gb_canvas.itemconfigure(gb_win_id, width=e.width))
-    gb_canvas.configure(yscrollcommand=gb_scroll.set)
-    gb_canvas.pack(side="left", fill="both", expand=True)
-    gb_scroll.pack(side="right", fill="y")
-
-    def _on_wheel(ev) -> None:
-        delta = -1 if getattr(ev, "num", 0) == 4 or getattr(ev, "delta", 0) > 0 else 1
-        gb_canvas.yview_scroll(delta, "units")
-
-    gb_canvas.bind("<MouseWheel>", _on_wheel)
-    gb_canvas.bind("<Button-4>", _on_wheel)
-    gb_canvas.bind("<Button-5>", _on_wheel)
-
-    # Sleek 1-line status bar at bottom of Mods page
-    mods_foot = tk.Label(
-        p_gb_browse,
-        text="●  GameBanana · Tears of the Kingdom (ID 7617)",
-        bg=C_BG,
-        fg=C_DIM,
-        font=(ui_font, 8),
-        anchor="w",
-    )
-    mods_foot.pack(fill="x", pady=(4, 0))
-
-    def _choose_file_dialog(mod: GBMod, files: list[GBFile]) -> GBFile | None:
-        if len(files) == 1:
-            return files[0]
-        picked: list[GBFile | None] = [None]
-        dlg = tk.Toplevel(root)
-        dlg.title(tr("pick_file_t"))
-        dlg.configure(bg=C_CARD)
-        dlg.geometry("560x320")
-        dlg.transient(root)
-        dlg.grab_set()
-        tk.Label(dlg, text=f"{tr('pick_file_h')}\n{mod.name}", bg=C_CARD, fg=C_TEXT, font=(serif_font, 11, "bold"), justify="left").pack(
-            fill="x", padx=16, pady=(14, 8)
-        )
-        lb = tk.Listbox(dlg, bg=C_INPUT, fg=C_TEXT, selectbackground=C_ACCENT, selectforeground=C_ACCENT_TXT, relief="flat", font=(ui_font, 9))
-        for f in files:
-            lb.insert("end", f"{f.filename}   ({f.size_bytes / (1024 * 1024):.2f} MiB)")
-        lb.selection_set(0)
-        lb.pack(fill="both", expand=True, padx=16, pady=(0, 12))
-        bf = tk.Frame(dlg, bg=C_CARD)
-        bf.pack(fill="x", padx=16, pady=(0, 14))
-
-        def _ok() -> None:
-            sel = lb.curselection()
-            if sel:
-                picked[0] = files[sel[0]]
-            dlg.destroy()
-
-        ModernButton(bf, tr("btn_cancel"), dlg.destroy, padx=12, pady=6).pack(side="right")
-        ModernButton(bf, tr("btn_download"), _ok, bg=C_ACCENT, hover_bg=C_ACCENT_HOV, fg=C_ACCENT_TXT, border=C_ACCENT, padx=14, pady=6).pack(
-            side="right", padx=(0, 8)
-        )
-        root.wait_window(dlg)
-        return picked[0]
-
-    def _download_mod_object(mod: GBMod, chosen_file: GBFile | None = None, auto_push: bool = True) -> None:
-        if auto_push and not ps5_connected[0]:
-            _open_ps5_connect_modal(startup=False, on_connected=lambda: _download_mod_object(mod, chosen_file, auto_push=True))
-            return
-        mods_foot.configure(text=f"⬇  Descargando {mod.name}...", fg=C_GOLD)
-        q.put(f">>> Fetching files for GameBanana mod #{mod.mod_id} ({mod.name})...\n")
-
-        def worker() -> None:
-            try:
-                chosen = chosen_file
-                if chosen is None:
-                    detail = gb_detail_cache.get((mod.mod_id, mod.wip))
-                    files = detail.files if (detail and detail.files) else fetch_mod_files(mod.mod_id, wip=mod.wip)
-                    if not files:
-                        root.after(0, lambda: mods_foot.configure(text="✖  Este mod no tiene archivos descargables.", fg=C_DANGER))
-                        return
-                    chosen_box: list[GBFile | None] = [None]
-                    ev = threading.Event()
-                    root.after(0, lambda: (chosen_box.__setitem__(0, _choose_file_dialog(mod, files)), ev.set()))
-                    ev.wait()
-                    chosen = chosen_box[0]
-                if not chosen:
-                    return
-                mods_root = Path(vars_map["out"].get().strip() or str(Path.home() / "TOTK-PS5-Out")) / "data_totk_ps5" / "mods"
-                staged_dir, warns = download_and_stage_mod(chosen, mod.name, mods_root, log_fn=lambda m: q.put(m + "\n"))
-                for w in warns:
-                    q.put(f"[warn] {w}\n")
-
-                def _after_stage() -> None:
-                    existing = [mods_list.get(i) for i in range(mods_list.size())]
-                    if str(staged_dir) not in existing:
-                        mods_list.insert("end", str(staged_dir))
-                    _update_installed_tab_label()
-                    mods_foot.configure(text=f"✔  {mod.name} listo en cola.", fg=C_ACCENT)
-
-                root.after(0, _after_stage)
-                if auto_push and ps5_connected[0]:
-                    host = vars_map["ftp_host"].get().strip()
-                    port = int(vars_map["ftp_port"].get().strip() or "2121")
-                    root.after(0, lambda: mods_foot.configure(text=f"▲  Instalando {staged_dir.name} en PS5...", fg=C_BLUE))
-                    dep = PS5Deployer(host, port, log_fn=lambda m: q.put(m + "\n"))
-                    try:
-                        dep.mkdir_p(f"/data/totk-ps5/mods/{staged_dir.name}")
-                        dep.chmod_777(f"/data/totk-ps5/mods/{staged_dir.name}")
-                        dep.upload_dir(staged_dir, f"/data/totk-ps5/mods/{staged_dir.name}")
-                        dirs = dep.list_dirs("/data/totk-ps5/mods")
-                    finally:
-                        dep.close()
-
-                    def _done_ps5() -> None:
-                        ps5_mods_count[0] = len(dirs)
-                        ps5_mods_list.delete(0, "end")
-                        for dn in dirs:
-                            ps5_mods_list.insert("end", dn)
-                        _update_installed_tab_label()
-                        mods_foot.configure(text=f"✔  {mod.name} instalado en PS5 (/data/totk-ps5/mods/).", fg=C_ACCENT)
-
-                    root.after(0, _done_ps5)
-            except Exception as exc:
-                q.put(f"[err] GameBanana download failed: {exc}\n")
-                root.after(0, lambda e=str(exc): mods_foot.configure(text=f"✖  Error: {e[:70]}", fg=C_DANGER))
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _open_zoom_lightbox(urls: list[str], start_idx: int = 0) -> None:
-        if not urls:
-            return
-        z = tk.Toplevel(root)
-        z.title("Vista previa")
-        z.configure(bg="#05070B")
-        z.geometry("920x600")
-        z.transient(root)
-        z.grab_set()
-        lbl = tk.Label(z, bg="#05070B", fg=C_DIM, text="Cargando imagen...", font=(ui_font, 10))
-        lbl.pack(fill="both", expand=True, padx=16, pady=12)
-        nav = tk.Frame(z, bg="#05070B")
-        nav.pack(fill="x", padx=16, pady=(0, 12))
-        idx_box = [start_idx]
-
-        def _load_idx(i: int) -> None:
-            idx_box[0] = i % len(urls)
-            u = urls[idx_box[0]]
-            lbl.configure(image="", text="Cargando...")
-
-            def _w() -> None:
-                ph = _bytes_to_tk_photo(fetch_image_bytes(u, timeout=8), (860, 500))
-                if ph is not None:
-                    root.after(0, lambda: z.winfo_exists() and (lbl.configure(image=ph, text=""), setattr(lbl, "image", ph)))
-
-            threading.Thread(target=_w, daemon=True).start()
-
-        if len(urls) > 1:
-            ModernButton(nav, tr("btn_prev_img"), lambda: _load_idx(idx_box[0] - 1), padx=10, pady=4).pack(side="left", padx=(0, 6))
-            ModernButton(nav, tr("btn_next_img"), lambda: _load_idx(idx_box[0] + 1), padx=10, pady=4).pack(side="left")
-        ModernButton(nav, tr("btn_cancel"), z.destroy, padx=12, pady=4).pack(side="right")
-        _load_idx(start_idx)
-
-    def _open_mod_detail_modal(mod: GBMod) -> None:
-        is_es = lang_code[0] == "es"
-        dlg = tk.Toplevel(root)
-        dlg.title(f"{mod.name} — Tears of the Kingdom")
-        dlg.configure(bg=C_BG)
-        dlg.geometry("760x620")
-        dlg.transient(root)
-        dlg.grab_set()
-
-        frame = tk.Frame(dlg, bg="#10151F", highlightbackground=C_GOLD, highlightthickness=1, padx=22, pady=18)
-        frame.pack(fill="both", expand=True, padx=14, pady=14)
-
-        tk.Label(frame, text=mod.name, bg="#10151F", fg=C_TEXT, font=(serif_font, 18, "bold"), anchor="w", wraplength=680).pack(fill="x")
-        meta_lbl = tk.Label(
-            frame,
-            text=f"{mod.author}  ·  {mod.category}  ·  ♥ {mod.likes}  ·  {mod.views:,} {'vistas' if is_es else 'views'}",
-            bg="#10151F",
-            fg=C_MUTED,
-            font=(ui_font, 9),
-            anchor="w",
-        )
-        meta_lbl.pack(fill="x", pady=(3, 10))
-
-        # File selector combobox right below subtitle (like oot-din Image 2!)
-        file_var = tk.StringVar(value="Cargando archivos..." if is_es else "Loading files...")
-        file_cb = ttk.Combobox(frame, textvariable=file_var, state="readonly", style="Dark.TCombobox")
-        file_cb.pack(fill="x", pady=(0, 12))
-        loaded_files: list[GBFile] = []
-        gallery_urls: list[str] = []
-
-        # Preview thumbnail + Ampliar vista previa
-        prev_row = tk.Frame(frame, bg="#10151F")
-        prev_row.pack(fill="x", pady=(0, 12))
-        img_lbl = tk.Label(prev_row, bg=C_INPUT, fg=C_DIM, text="...", width=28, height=7, highlightbackground=C_GOLD, highlightthickness=1, cursor="hand2")
-        img_lbl.pack(side="left")
-        ModernButton(
-            prev_row,
-            "🔍  Ampliar vista previa" if is_es else "🔍  Expand preview",
-            lambda: _open_zoom_lightbox(gallery_urls or ([mod.full_img_url] if mod.full_img_url else [])),
-            bg="#10151F",
-            hover_bg=C_CARD_ALT,
-            fg=C_MUTED,
-            border="#10151F",
-            font_spec=(ui_font, 9),
-            padx=14,
-            pady=6,
-        ).pack(side="left", padx=12)
-        img_lbl.bind("<Button-1>", lambda _e: _open_zoom_lightbox(gallery_urls or ([mod.full_img_url] if mod.full_img_url else [])))
-
-        # Borderless editorial description
-        desc_box = scrolledtext.ScrolledText(
-            frame,
-            bg="#10151F",
-            fg="#E2E8F0",
-            font=(ui_font, 10),
-            relief="flat",
-            borderwidth=0,
-            highlightthickness=0,
-            wrap="word",
-            height=11,
-            padx=2,
-            pady=4,
-        )
-        desc_box.pack(fill="both", expand=True, pady=(0, 12))
-        desc_box.insert("1.0", tr("gb_loading_detail"))
-        desc_box.configure(state="disabled")
-
-        foot = tk.Frame(frame, bg="#10151F")
-        foot.pack(fill="x")
-
-        def _install_from_modal() -> None:
-            chosen = None
-            idx_f = file_cb.current()
-            if loaded_files and 0 <= idx_f < len(loaded_files):
-                chosen = loaded_files[idx_f]
-            dlg.destroy()
-            _download_mod_object(mod, chosen_file=chosen, auto_push=True)
-
-        ModernButton(
-            foot,
-            "⬇  Instalar en PS5" if is_es else "⬇  Install to PS5",
-            _install_from_modal,
-            bg=C_GOLD,
-            hover_bg="#F5D782",
-            fg="#1A1405",
-            border=C_GOLD,
-            font_spec=(ui_font, 9, "bold"),
-            padx=18,
-            pady=7,
-        ).pack(side="right")
-        ModernButton(
-            foot,
-            "Ver página" if is_es else "Open web",
-            lambda: webbrowser.open(mod.profile_url),
-            bg="#10151F",
-            hover_bg=C_CARD_ALT,
-            fg=C_MUTED,
-            border="#10151F",
-            padx=12,
-            pady=7,
-        ).pack(side="right", padx=(0, 8))
-        ModernButton(
-            foot,
-            "Cerrar" if is_es else "Close",
-            dlg.destroy,
-            bg="#10151F",
-            hover_bg=C_CARD_ALT,
-            fg=C_MUTED,
-            border="#10151F",
-            padx=12,
-            pady=7,
-        ).pack(side="right", padx=(0, 6))
-
-        def _load_modal_detail() -> None:
-            detail = gb_detail_cache.get((mod.mod_id, mod.wip))
-            if detail is None:
-                try:
-                    detail = fetch_mod_detail(mod.mod_id, wip=mod.wip)
-                    gb_detail_cache[(mod.mod_id, mod.wip)] = detail
-                except Exception:
-                    detail = GBModDetail(mod_id=mod.mod_id, description=mod.summary or "", gallery_urls=[mod.full_img_url] if mod.full_img_url else [])
-
-            urls = detail.gallery_urls or ([mod.full_img_url] if mod.full_img_url else ([mod.thumb_url] if mod.thumb_url else []))
-            ph = _bytes_to_tk_photo(fetch_image_bytes(urls[0], timeout=6), (200, 112)) if urls else None
-
-            def _apply() -> None:
-                if not dlg.winfo_exists():
-                    return
-                gallery_urls.clear()
-                gallery_urls.extend(urls)
-                loaded_files.clear()
-                loaded_files.extend(detail.files)
-                if loaded_files:
-                    file_cb.configure(values=[f"{f.filename} ({f.size_bytes / (1024 * 1024):.1f} MB)" for f in loaded_files])
-                    file_cb.current(0)
-                else:
-                    file_var.set("Sin archivos descargables" if is_es else "No downloadable files")
-                meta_lbl.configure(
-                    text=f"{detail.author or mod.author}  ·  {detail.category or mod.category}  ·  ♥ {detail.likes or mod.likes}  ·  {(detail.views or mod.views):,} {'vistas' if is_es else 'views'}"
-                )
-                desc_box.configure(state="normal")
-                desc_box.delete("1.0", "end")
-                desc_box.insert("1.0", detail.description or mod.summary or tr("gb_no_desc"))
-                desc_box.configure(state="disabled")
-                if ph is not None:
-                    img_lbl.configure(image=ph, text="", width=200, height=112)
-                    img_lbl.image = ph  # type: ignore[attr-defined]
-                else:
-                    img_lbl.configure(text=mod.name[:20])
-
-            root.after(0, _apply)
-
-        threading.Thread(target=_load_modal_detail, daemon=True).start()
-
-    def _render_gb_cards(mods: list[GBMod], seq: int) -> None:
-        gb_results.clear()
-        gb_results.extend(mods)
-        for child in gb_cards_host.winfo_children():
-            child.destroy()
-
-        gb_cards_host.columnconfigure(0, weight=1, uniform="gbcol")
-        gb_cards_host.columnconfigure(1, weight=1, uniform="gbcol")
-        is_es = lang_code[0] == "es"
-
-        for idx, m in enumerate(mods):
-            r_idx, c_idx = divmod(idx, 2)
-            cell = tk.Frame(gb_cards_host, bg=C_BG, cursor="hand2")
-            cell.grid(row=r_idx, column=c_idx, sticky="nsew", padx=(0 if c_idx == 0 else 10, 10 if c_idx == 0 else 0), pady=0)
-
-            row_f = tk.Frame(cell, bg=C_BG, padx=6, pady=7)
-            row_f.pack(fill="both", expand=True)
-            tk.Frame(cell, bg="#1A2232", height=1).pack(fill="x")
-
-            thumb_lbl = tk.Label(row_f, bg=C_INPUT, fg=C_DIM, text="IMG", width=11, height=3, font=(ui_font, 7, "bold"))
-            thumb_lbl.pack(side="left", padx=(0, 10))
-
-            info = tk.Frame(row_f, bg=C_BG)
-            info.pack(side="left", fill="both", expand=True)
-            t_lbl = tk.Label(info, text=m.name, bg=C_BG, fg=C_TEXT, font=(ui_font, 9, "bold"), anchor="w", justify="left", wraplength=240)
-            t_lbl.pack(fill="x")
-            m_lbl = tk.Label(
-                info,
-                text=f"{m.author}  ·  {m.category}  ·  ★ {m.likes}",
-                bg=C_BG,
-                fg=C_MUTED,
-                font=(ui_font, 8),
-                anchor="w",
-            )
-            m_lbl.pack(fill="x", pady=(2, 0))
-
-            inst_lbl = tk.Label(
-                row_f,
-                text="Instalar" if is_es else "Install",
-                bg=C_BG,
-                fg=C_GOLD,
-                font=(ui_font, 8, "bold"),
-                padx=8,
-                cursor="hand2",
-            )
-            inst_lbl.pack(side="right")
-
-            hover_widgets = [row_f, info, t_lbl, m_lbl, inst_lbl]
-
-            def _enter(_e, wlist=hover_widgets) -> None:
-                for w in wlist:
-                    w.configure(bg="#111827")
-
-            def _leave(_e, wlist=hover_widgets) -> None:
-                for w in wlist:
-                    w.configure(bg=C_BG)
-
-            for w in [row_f, thumb_lbl, info, t_lbl, m_lbl]:
-                w.bind("<Enter>", _enter)
-                w.bind("<Leave>", _leave)
-                w.bind("<Button-1>", lambda _e, mod_obj=m: _open_mod_detail_modal(mod_obj))
-                w.bind("<Double-Button-1>", lambda _e, mod_obj=m: _open_mod_detail_modal(mod_obj))
-                w.bind("<MouseWheel>", _on_wheel)
-                w.bind("<Button-4>", _on_wheel)
-                w.bind("<Button-5>", _on_wheel)
-
-            inst_lbl.bind("<Enter>", _enter)
-            inst_lbl.bind("<Leave>", _leave)
-            inst_lbl.bind("<Button-1>", lambda _e, mod_obj=m: _download_mod_object(mod_obj, auto_push=True))
-
-            if m.thumb_url:
-                cached_ph = gb_photo_cache.get(m.thumb_url)
-                if cached_ph is not None:
-                    thumb_lbl.configure(image=cached_ph, text="", width=88, height=50)
-                    thumb_lbl.image = cached_ph  # type: ignore[attr-defined]
-                else:
-                    def _dl_th(url_t: str = m.thumb_url, lbl: tk.Label = thumb_lbl, my_seq: int = seq) -> None:
-                        ph = _bytes_to_tk_photo(fetch_image_bytes(url_t, timeout=5), (88, 50))
-                        if ph is not None:
-                            def _set_th() -> None:
-                                if gb_search_seq[0] == my_seq and lbl.winfo_exists():
-                                    gb_photo_cache[url_t] = ph
-                                    lbl.configure(image=ph, text="", width=88, height=50)
-                                    lbl.image = ph  # type: ignore[attr-defined]
-                            root.after(0, _set_th)
-
-                    threading.Thread(target=_dl_th, daemon=True).start()
-
-        mods_foot.configure(
-            text=f"●  {len(mods)} mods mostrados (de {len(gb_all_results)} en GameBanana) · Haz clic en cualquier mod para ver descripción completa y fotos"
-            if is_es
-            else f"●  {len(mods)} mods shown (of {len(gb_all_results)} on GameBanana) · Click any mod for full description & screenshots",
-            fg=C_DIM,
-        )
-
-    def _pick_cat(cat_key: str) -> None:
-        vars_map["gb_cat"].set(cat_key)
-        _refresh_cat_pills()
-        if gb_all_results:
-            filtered = [m for m in gb_all_results if match_category(m, cat_key)]
-            gb_search_seq[0] += 1
-            _render_gb_cards(filtered, gb_search_seq[0])
-        else:
-            _run_gb_search()
-
-    for key_c, es_l, _en_l in GB_CATEGORIES:
-        cb = ModernButton(gb_cat_bar, es_l, lambda ck=key_c: _pick_cat(ck), font_spec=(ui_font, 8, "bold"), padx=10, pady=4)
-        cb.pack(side="left", padx=(0, 6))
-        cat_btns[key_c] = cb
-    _refresh_cat_pills()
-
-    def _run_gb_search() -> None:
-        query = vars_map["gb_query"].get().strip()
-        sort = vars_map["gb_sort"].get().strip() or "default"
-        cat_key = vars_map["gb_cat"].get().strip() or "all"
-        gb_search_seq[0] += 1
-        my_seq = gb_search_seq[0]
-        mods_foot.configure(text="⏳  Buscando mods en GameBanana...", fg=C_GOLD)
-        q.put(f">>> GameBanana search: '{query or '(featured)'}' ({sort}, cat={cat_key})\n")
-
-        def worker() -> None:
-            try:
-                mods = search_mods(query=query, page=1, sort=sort, category="all", max_pages=3)
-                if gb_search_seq[0] != my_seq:
-                    return
-                gb_all_results.clear()
-                gb_all_results.extend(mods)
-                filtered = [m for m in mods if match_category(m, cat_key)]
-
-                def _apply() -> None:
-                    _refresh_cat_pills()
-                    _render_gb_cards(filtered, my_seq)
-
-                root.after(0, _apply)
-                q.put(f"[ok] GameBanana returned {len(mods)} TOTK mods.\n")
-            except Exception as exc:
-                q.put(f"[err] GameBanana search failed: {exc}\n")
-                root.after(0, lambda e=str(exc): mods_foot.configure(text=f"✖  Error GameBanana: {e[:60]}", fg=C_DANGER))
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    gb_ent.bind("<Return>", lambda _e: _run_gb_search())
-    b_search = ModernButton(search_box, tr("btn_search"), _run_gb_search, bg=C_ACCENT, hover_bg=C_ACCENT_HOV, fg=C_ACCENT_TXT, border=C_ACCENT, padx=12, pady=5)
-    bind_tr(b_search, "btn_search", mode="modern")
-    b_search.pack(side="left")
-
-    def _push_mods_ftp_now() -> None:
-        if not ps5_connected[0]:
-            _open_ps5_connect_modal(startup=False, on_connected=_push_mods_ftp_now)
-            return
-        host = vars_map["ftp_host"].get().strip()
-        port = int(vars_map["ftp_port"].get().strip() or "2121")
-        out_mods = Path(vars_map["out"].get().strip() or str(Path.home() / "TOTK-PS5-Out")) / "data_totk_ps5" / "mods"
-        if not out_mods.is_dir():
-            q.put("[err] No staged mods directory found yet.\n")
-            return
-        q.put(f">>> Pushing staged mods from {out_mods} -> ps5://{host}:{port}/data/totk-ps5/mods\n")
-
-        def worker() -> None:
-            try:
-                dep = PS5Deployer(host, port, log_fn=lambda m: q.put(m + "\n"))
-                try:
-                    dep.mkdir_p("/data/totk-ps5/mods")
-                    dep.chmod_777("/data/totk-ps5/mods")
-                    n = dep.upload_dir(out_mods, "/data/totk-ps5/mods")
-                    dirs = dep.list_dirs("/data/totk-ps5/mods")
-                    q.put(f"[ok] Uploaded {n} mod files to /data/totk-ps5/mods!\n")
-                    root.after(0, lambda: (ps5_mods_count.__setitem__(0, len(dirs)), _update_installed_tab_label()))
-                finally:
-                    dep.close()
-            except Exception as exc:
-                q.put(f"[err] FTP mod upload failed: {exc}\n")
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    # ---- SUB-PAGE 1: INSTALLED ON PS5 & LOCAL QUEUE ----
-    c_ps5_mods = make_card(p_gb_installed, "c_ps5_mods_t", "c_ps5_mods_s")
-    ps5_lb_wrap = tk.Frame(c_ps5_mods, bg=C_BORDER, padx=1, pady=1)
-    ps5_lb_wrap.pack(fill="x", pady=(0, 6))
-    ps5_mods_list = tk.Listbox(
-        ps5_lb_wrap,
-        height=5,
-        bg=C_INPUT,
-        fg=C_TEXT,
-        selectbackground=C_BLUE,
-        selectforeground="#05131C",
-        relief="flat",
-        font=(ui_font, 9),
-        highlightthickness=0,
-    )
-    ps5_mods_list.pack(fill="both", expand=True, padx=4, pady=3)
-    ps5_mod_btns = tk.Frame(c_ps5_mods, bg=C_CARD)
-    ps5_mod_btns.pack(fill="x")
-
-    def _refresh_ps5_mods() -> None:
-        if not ps5_connected[0]:
-            _open_ps5_connect_modal(startup=False, on_connected=_refresh_ps5_mods)
-            return
-        host = vars_map["ftp_host"].get().strip()
-        port = int(vars_map["ftp_port"].get().strip() or "2121")
-        q.put(f">>> Listing /data/totk-ps5/mods on ps5://{host}:{port}...\n")
-
-        def worker() -> None:
-            try:
-                dep = PS5Deployer(host, port, log_fn=lambda m: q.put(m + "\n"))
-                try:
-                    dirs = dep.list_dirs("/data/totk-ps5/mods")
-                finally:
-                    dep.close()
-
-                def _fill() -> None:
-                    ps5_mods_count[0] = len(dirs)
-                    ps5_mods_list.delete(0, "end")
-                    for d_name in dirs:
-                        ps5_mods_list.insert("end", d_name)
-                    _update_installed_tab_label()
-
-                root.after(0, _fill)
-                q.put(f"[ok] Found {len(dirs)} installed mods on PS5.\n")
-            except Exception as exc:
-                q.put(f"[err] Could not list PS5 mods: {exc}\n")
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _delete_ps5_mod() -> None:
-        sel = ps5_mods_list.curselection()
-        if not sel:
-            return
-        mod_name = ps5_mods_list.get(sel[0])
-        host = vars_map["ftp_host"].get().strip()
-        if not host:
-            messagebox.showerror(tr("err_no_ip_t"), tr("err_no_ip_m"))
-            return
-        if not messagebox.askyesno(tr("ps5_del_confirm_t"), tr("ps5_del_confirm_m").format(name=mod_name)):
-            return
-        port = int(vars_map["ftp_port"].get().strip() or "2121")
-        q.put(f">>> Deleting /data/totk-ps5/mods/{mod_name} on PS5...\n")
-
-        def worker() -> None:
-            try:
-                dep = PS5Deployer(host, port, log_fn=lambda m: q.put(m + "\n"))
-                try:
-                    dep.rm_rf(f"/data/totk-ps5/mods/{mod_name}")
-                finally:
-                    dep.close()
-                root.after(0, _refresh_ps5_mods)
-                q.put(f"[ok] Deleted '{mod_name}' from PS5.\n")
-            except Exception as exc:
-                q.put(f"[err] Delete failed: {exc}\n")
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    b_ps5_ref = ModernButton(ps5_mod_btns, tr("btn_ps5_refresh"), _refresh_ps5_mods, bg=C_BLUE, hover_bg=C_BLUE_HOV, fg="#05131C", border=C_BLUE, font_spec=(ui_font, 8, "bold"), padx=10, pady=5)
-    bind_tr(b_ps5_ref, "btn_ps5_refresh", mode="modern")
-    b_ps5_ref.pack(side="left", padx=(0, 8))
-
-    b_ps5_del = ModernButton(ps5_mod_btns, tr("btn_ps5_del"), _delete_ps5_mod, fg=C_DANGER, font_spec=(ui_font, 8, "bold"), padx=10, pady=5)
-    bind_tr(b_ps5_del, "btn_ps5_del", mode="modern")
-    b_ps5_del.pack(side="left")
-
-    c_queue = make_card(p_gb_installed, "c_queue_t", "c_queue_s")
-    lb_wrap = tk.Frame(c_queue, bg=C_BORDER, padx=1, pady=1)
-    lb_wrap.pack(fill="x", pady=(0, 6))
-    mods_list = tk.Listbox(
-        lb_wrap,
-        height=4,
-        bg=C_INPUT,
-        fg=C_TEXT,
-        selectbackground=C_ACCENT,
-        selectforeground=C_ACCENT_TXT,
-        relief="flat",
-        font=(ui_font, 9),
-        highlightthickness=0,
-    )
-    mods_list.pack(fill="both", expand=True, padx=4, pady=3)
-    mod_btns = tk.Frame(c_queue, bg=C_CARD)
-    mod_btns.pack(fill="x")
-
-    def add_mod_folder() -> None:
-        d = filedialog.askdirectory()
-        if d:
-            mods_list.insert("end", d)
-
-    def add_mod_zip() -> None:
-        f = filedialog.askopenfilename(filetypes=[("ZIP archives", "*.zip")])
-        if f:
-            mods_list.insert("end", f)
-
-    def remove_mod() -> None:
-        for idx in reversed(mods_list.curselection()):
-            mods_list.delete(idx)
-
-    for key_b, fn, fg_c in (("btn_add_dir", add_mod_folder, C_TEXT), ("btn_add_zip", add_mod_zip, C_TEXT), ("btn_rm_mod", remove_mod, C_DANGER)):
-        mb = ModernButton(mod_btns, tr(key_b), fn, fg=fg_c, font_spec=(ui_font, 8, "bold"), padx=10, pady=5)
-        bind_tr(mb, key_b, mode="modern")
-        mb.pack(side="left", padx=(0, 8))
-
-    b_queue_ftp = ModernButton(mod_btns, tr("btn_gb_ftp"), _push_mods_ftp_now, bg=C_ACCENT, hover_bg=C_ACCENT_HOV, fg=C_ACCENT_TXT, border=C_ACCENT, font_spec=(ui_font, 8, "bold"), padx=10, pady=5)
-    bind_tr(b_queue_ftp, "btn_gb_ftp", mode="modern")
-    b_queue_ftp.pack(side="right")
-
-    _select_mods_sub("browse")
+    def _build_page_build(self) -> None:
+        scroll, lay = self._wrap_scroll_page(max_width=1060)
+
+        ey = self._bind_tr(QLabel(), "p_build_eyebrow")
+        ey.setObjectName("Eyebrow")
+        h = self._bind_tr(QLabel(), "p_build_h")
+        h.setObjectName("PageTitle")
+        sub = self._bind_tr(QLabel(), "p_build_s")
+        sub.setObjectName("PageSub")
+        sub.setWordWrap(True)
+        lay.addWidget(ey)
+        lay.addWidget(h)
+        lay.addWidget(sub)
+
+        # Card 1: Game Source (clean 2-column grid instead of stretched 1600px rows!)
+        c_src, src_lay = self._make_card("c_src_t", "c_src_s")
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(18)
+        grid.setVerticalSpacing(12)
+
+        w_game, self.ed_game = self._make_path_field("lbl_game", filt="Switch Images (*.xci *.nsp);;All Files (*)")
+        w_upd, self.ed_update = self._make_path_field("lbl_update", filt="Switch Updates (*.nsp);;All Files (*)")
+        w_keys, self.ed_keys = self._make_path_field("lbl_keys", filt="Key Files (*.keys);;All Files (*)")
+        w_out, self.ed_out = self._make_path_field("lbl_out", default=self.prefs.get("out", str(Path.home() / "TOTK-PS5-Out")), pick_dir=True)
+
+        grid.addWidget(w_game, 0, 0)
+        grid.addWidget(w_upd, 0, 1)
+        grid.addWidget(w_keys, 1, 0)
+        grid.addWidget(w_out, 1, 1)
+        src_lay.addLayout(grid)
+
+        # Divider + optional extracted folders
+        div = QFrame()
+        div.setFixedHeight(1)
+        div.setStyleSheet("background-color: #1D293D;")
+        src_lay.addWidget(div)
+
+        adv_lbl = self._bind_tr(QLabel(), "c_adv_t")
+        adv_lbl.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {C_GOLD};")
+        src_lay.addWidget(adv_lbl)
+
+        grid2 = QGridLayout()
+        grid2.setHorizontalSpacing(18)
+        grid2.setVerticalSpacing(10)
+        w_exefs, self.ed_exefs = self._make_path_field("lbl_exefs", pick_dir=True)
+        w_romfs, self.ed_romfs = self._make_path_field("lbl_romfs", pick_dir=True)
+        w_sh, self.ed_shaders = self._make_path_field("lbl_shaders", pick_dir=True)
+        grid2.addWidget(w_exefs, 0, 0)
+        grid2.addWidget(w_romfs, 0, 1)
+        grid2.addWidget(w_sh, 1, 0, 1, 2)
+        src_lay.addLayout(grid2)
+        lay.addWidget(c_src)
+
+        # Card 2: PS5 Profile
+        c_opt, opt_lay = self._make_card("c_opt_t", "c_opt_s")
+        chk_row = QHBoxLayout()
+        chk_row.setSpacing(24)
+        self.chk_prompts = self._bind_tr(QCheckBox(), "chk_prompts")
+        self.chk_prompts.setChecked(True)
+        self.chk_shaders = self._bind_tr(QCheckBox(), "chk_shaders")
+        self.chk_shaders.setChecked(True)
+        chk_row.addWidget(self.chk_prompts)
+        chk_row.addWidget(self.chk_shaders)
+        chk_row.addStretch(1)
+        opt_lay.addLayout(chk_row)
+
+        p_grid = QGridLayout()
+        p_grid.setHorizontalSpacing(14)
+        self.cb_res = QComboBox()
+        self.cb_res.addItems(["2560x1440", "1920x1080", "3840x2160"])
+        self.cb_hz = QComboBox()
+        self.cb_hz.addItems(["120", "60"])
+        self.cb_fg = QComboBox()
+        self.cb_fg.addItems(["fsr3", "off"])
+        self.cb_scale = QComboBox()
+        self.cb_scale.addItems(["75", "67", "game", "100"])
+        self.cb_lang = QComboBox()
+        self.cb_lang.addItems(["es-419", "es-ES", "en-US", "fr-FR", "de-DE", "ja-JP"])
+
+        for col_idx, (lk, cb) in enumerate(
+            [
+                ("lbl_res", self.cb_res),
+                ("lbl_hz", self.cb_hz),
+                ("lbl_fg", self.cb_fg),
+                ("lbl_scale", self.cb_scale),
+                ("lbl_lang", self.cb_lang),
+            ]
+        ):
+            lbl = self._bind_tr(QLabel(), lk)
+            lbl.setObjectName("FieldLabel")
+            p_grid.addWidget(lbl, 0, col_idx)
+            p_grid.addWidget(cb, 1, col_idx)
+        opt_lay.addLayout(p_grid)
+        lay.addWidget(c_opt)
+        lay.addStretch(1)
+
+        self._page_indices["build"] = self.stack.addWidget(scroll)
+
+    # ================ PAGE 2: EDITORIAL MODS & GAMEBANANA ================
+    def _build_page_mods(self) -> None:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(32, 22, 32, 16)
+        lay.setSpacing(12)
+
+        # Header + Search on right
+        hdr = QHBoxLayout()
+        hdr.setSpacing(16)
+        hdr_l = QVBoxLayout()
+        hdr_l.setSpacing(2)
+        ey = self._bind_tr(QLabel(), "p_mods_eyebrow")
+        ey.setObjectName("Eyebrow")
+        ht = self._bind_tr(QLabel(), "p_mods_h")
+        ht.setObjectName("PageTitle")
+        hdr_l.addWidget(ey)
+        hdr_l.addWidget(ht)
+        hdr.addLayout(hdr_l, 1)
+
+        search_row = QHBoxLayout()
+        search_row.setSpacing(8)
+        self.ed_gb_query = QLineEdit()
+        self.ed_gb_query.setMinimumWidth(250)
+        self.ed_gb_query.setMinimumHeight(38)
+        self.ed_gb_query.setPlaceholderText(self.tr_key("search_ph"))
+        self.ed_gb_query.returnPressed.connect(self.run_gb_search)
+        self.cb_gb_sort = QComboBox()
+        self.cb_gb_sort.addItems(["default", "new", "updated"])
+        self.cb_gb_sort.setFixedWidth(112)
+        self.btn_gb_search = self._bind_tr(QPushButton(), "btn_search")
+        self.btn_gb_search.setObjectName("PrimaryEmerald")
+        self.btn_gb_search.setMinimumHeight(38)
+        self.btn_gb_search.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_gb_search.clicked.connect(self.run_gb_search)
+        search_row.addWidget(self.ed_gb_query)
+        search_row.addWidget(self.cb_gb_sort)
+        search_row.addWidget(self.btn_gb_search)
+        hdr.addLayout(search_row)
+        lay.addLayout(hdr)
+
+        # Sub-tabs: Explorar | Tus Mods (PS5/Local)
+        sub_row = QHBoxLayout()
+        sub_row.setSpacing(10)
+        self.btn_sub_browse = QPushButton(self.tr_key("tab_gb_browse"))
+        self.btn_sub_browse.setObjectName("SubTab")
+        self.btn_sub_browse.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_sub_browse.clicked.connect(lambda: self._select_mods_sub(0))
+
+        self.btn_sub_inst = QPushButton(f"{self.tr_key('tab_gb_installed')} (0/0)")
+        self.btn_sub_inst.setObjectName("SubTab")
+        self.btn_sub_inst.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_sub_inst.clicked.connect(lambda: self._select_mods_sub(1))
+
+        self.lbl_mods_count = QLabel("")
+        self.lbl_mods_count.setStyleSheet(f"font-size: 12.5px; color: {C_GOLD}; font-weight: 600;")
+
+        sub_row.addWidget(self.btn_sub_browse)
+        sub_row.addWidget(self.btn_sub_inst)
+        sub_row.addSpacing(12)
+        sub_row.addWidget(self.lbl_mods_count)
+        sub_row.addStretch(1)
+        lay.addLayout(sub_row)
+
+        self.mods_stack = QStackedWidget()
+        lay.addWidget(self.mods_stack, 1)
+
+        # ---- Sub-page 0: GameBanana 2-Column Editorial Grid ----
+        browse_w = QWidget()
+        b_lay = QVBoxLayout(browse_w)
+        b_lay.setContentsMargins(0, 0, 0, 0)
+        b_lay.setSpacing(10)
+
+        cat_row = QHBoxLayout()
+        cat_row.setSpacing(6)
+        self.cat_buttons: dict[str, QPushButton] = {}
+        for key_c, es_l, _en_l in GB_CATEGORIES:
+            b = QPushButton(es_l)
+            b.setObjectName("CatTab")
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _c=False, ck=key_c: self._select_gb_cat(ck))
+            cat_row.addWidget(b)
+            self.cat_buttons[key_c] = b
+        cat_row.addStretch(1)
+        b_lay.addLayout(cat_row)
+
+        self.gb_scroll = QScrollArea()
+        self.gb_scroll.setWidgetResizable(True)
+        self.gb_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.gb_scroll.viewport().setStyleSheet(f"background-color: {C_BG};")
+        self.gb_grid_host = QWidget()
+        self.gb_grid_host.setObjectName("ScrollCanvas")
+        self.gb_grid_host.setStyleSheet(f"QWidget#ScrollCanvas {{ background-color: {C_BG}; }}")
+        self.gb_grid_lay = QGridLayout(self.gb_grid_host)
+        self.gb_grid_lay.setContentsMargins(0, 4, 10, 12)
+        self.gb_grid_lay.setHorizontalSpacing(24)
+        self.gb_grid_lay.setVerticalSpacing(0)
+        self.gb_grid_lay.setColumnStretch(0, 1)
+        self.gb_grid_lay.setColumnStretch(1, 1)
+        self.gb_scroll.setWidget(self.gb_grid_host)
+        b_lay.addWidget(self.gb_scroll, 1)
+
+        self.lbl_mods_foot = QLabel("●  GameBanana · Tears of the Kingdom (ID 7617)")
+        self.lbl_mods_foot.setStyleSheet(f"font-size: 12px; color: {C_MUTED};")
+        b_lay.addWidget(self.lbl_mods_foot)
+        self.mods_stack.addWidget(browse_w)
+
+        # ---- Sub-page 1: Tus Mods (PS5 Installed + Local Queue, Image 3 style) ----
+        inst_scroll = QScrollArea()
+        inst_scroll.setWidgetResizable(True)
+        inst_scroll.viewport().setStyleSheet(f"background-color: {C_BG};")
+        inst_w = QWidget()
+        inst_w.setObjectName("ScrollCanvas")
+        inst_w.setStyleSheet(f"QWidget#ScrollCanvas {{ background-color: {C_BG}; }}")
+        inst_lay = QVBoxLayout(inst_w)
+        inst_lay.setContentsMargins(0, 6, 12, 12)
+        inst_lay.setSpacing(16)
+
+        act_row = QHBoxLayout()
+        act_row.setSpacing(10)
+        b_zip = self._bind_tr(QPushButton(), "btn_add_zip")
+        b_zip.setCursor(Qt.CursorShape.PointingHandCursor)
+        b_zip.clicked.connect(self._add_local_zip)
+        b_dir = self._bind_tr(QPushButton(), "btn_add_dir")
+        b_dir.setCursor(Qt.CursorShape.PointingHandCursor)
+        b_dir.clicked.connect(self._add_local_dir)
+        b_ref = self._bind_tr(QPushButton(), "btn_ps5_refresh")
+        b_ref.setObjectName("PrimaryBlue")
+        b_ref.setCursor(Qt.CursorShape.PointingHandCursor)
+        b_ref.clicked.connect(self.refresh_ps5_mods)
+        b_push = self._bind_tr(QPushButton(), "btn_push_mods")
+        b_push.setObjectName("PrimaryGold")
+        b_push.setCursor(Qt.CursorShape.PointingHandCursor)
+        b_push.clicked.connect(self.push_staged_mods_to_ps5)
+        act_row.addWidget(b_zip)
+        act_row.addWidget(b_dir)
+        act_row.addWidget(b_ref)
+        act_row.addStretch(1)
+        act_row.addWidget(b_push)
+        inst_lay.addLayout(act_row)
+
+        # PS5 installed section
+        c_ps5 = QFrame()
+        c_ps5.setObjectName("EditorialCard")
+        c_ps5_l = QVBoxLayout(c_ps5)
+        c_ps5_l.setContentsMargins(20, 16, 20, 16)
+        c_ps5_l.setSpacing(8)
+        ps5_h = self._bind_tr(QLabel(), "ps5_mods_hdr")
+        ps5_h.setObjectName("CardTitle")
+        c_ps5_l.addWidget(ps5_h)
+        self.ps5_mods_host = QVBoxLayout()
+        self.ps5_mods_host.setSpacing(0)
+        c_ps5_l.addLayout(self.ps5_mods_host)
+        inst_lay.addWidget(c_ps5)
+
+        # Local queue section
+        c_loc = QFrame()
+        c_loc.setObjectName("EditorialCard")
+        c_loc_l = QVBoxLayout(c_loc)
+        c_loc_l.setContentsMargins(20, 16, 20, 16)
+        c_loc_l.setSpacing(8)
+        loc_h = self._bind_tr(QLabel(), "local_mods_hdr")
+        loc_h.setObjectName("CardTitle")
+        c_loc_l.addWidget(loc_h)
+        self.local_mods_host = QVBoxLayout()
+        self.local_mods_host.setSpacing(0)
+        c_loc_l.addLayout(self.local_mods_host)
+        inst_lay.addWidget(c_loc)
+        inst_lay.addStretch(1)
+
+        inst_scroll.setWidget(inst_w)
+        self.mods_stack.addWidget(inst_scroll)
+
+        self._select_mods_sub(0)
+        self._rebuild_installed_lists()
+        self._page_indices["mods"] = self.stack.addWidget(page)
 
     # ================ PAGE 3: DEPLOY TO PS5 (FTP) ================
-    p_ftp = tk.Frame(page_host, bg=C_BG)
-    pages["ftp"] = p_ftp
+    def _build_page_ftp(self) -> None:
+        scroll, lay = self._wrap_scroll_page(max_width=920)
+        ey = self._bind_tr(QLabel(), "p_ftp_eyebrow")
+        ey.setObjectName("Eyebrow")
+        h = self._bind_tr(QLabel(), "p_ftp_h")
+        h.setObjectName("PageTitle")
+        sub = self._bind_tr(QLabel(), "p_ftp_s")
+        sub.setObjectName("PageSub")
+        sub.setWordWrap(True)
+        lay.addWidget(ey)
+        lay.addWidget(h)
+        lay.addWidget(sub)
 
-    bind_tr(tk.Label(p_ftp, bg=C_BG, fg=C_TEXT, font=(ui_font, 15, "bold"), anchor="w"), "p_ftp_h").pack(fill="x")
-    bind_tr(tk.Label(p_ftp, bg=C_BG, fg=C_MUTED, font=(ui_font, 9), anchor="w"), "p_ftp_s").pack(fill="x", pady=(2, 12))
+        c_ftp, f_lay = self._make_card("c_ftp_t", "c_ftp_s")
+        row = QHBoxLayout()
+        row.setSpacing(14)
 
-    c_ftp = make_card(p_ftp, "c_ftp_t", "c_ftp_s")
-    ftp_row = tk.Frame(c_ftp, bg=C_CARD)
-    ftp_row.pack(fill="x", pady=(0, 10))
-    bind_tr(tk.Label(ftp_row, bg=C_CARD, fg=C_MUTED, font=(ui_font, 9)), "lbl_ip").pack(side="left", padx=(0, 8))
-    ip_wrap = tk.Frame(ftp_row, bg=C_BORDER, padx=1, pady=1)
-    ip_wrap.pack(side="left", padx=(0, 18))
-    ip_ent = tk.Entry(ip_wrap, textvariable=vars_map["ftp_host"], width=20, bg=C_INPUT, fg=C_TEXT, insertbackground=C_ACCENT, relief="flat", font=(ui_font, 10))
-    ip_ent.pack(ipady=5, padx=8)
-    ip_ent.bind("<FocusIn>", lambda _e: ip_wrap.configure(bg=C_ACCENT))
-    ip_ent.bind("<FocusOut>", lambda _e: ip_wrap.configure(bg=C_BORDER))
+        col_ip = QVBoxLayout()
+        col_ip.setSpacing(5)
+        l_ip = self._bind_tr(QLabel(), "lbl_ip")
+        l_ip.setObjectName("FieldLabel")
+        self.ed_ftp_host = QLineEdit(self.prefs.get("ftp_host", ""))
+        self.ed_ftp_host.setPlaceholderText("192.168.1.50")
+        self.ed_ftp_host.setMinimumHeight(40)
+        col_ip.addWidget(l_ip)
+        col_ip.addWidget(self.ed_ftp_host)
 
-    bind_tr(tk.Label(ftp_row, bg=C_CARD, fg=C_MUTED, font=(ui_font, 9)), "lbl_port").pack(side="left", padx=(0, 8))
-    pt_wrap = tk.Frame(ftp_row, bg=C_BORDER, padx=1, pady=1)
-    pt_wrap.pack(side="left")
-    tk.Entry(pt_wrap, textvariable=vars_map["ftp_port"], width=8, bg=C_INPUT, fg=C_TEXT, insertbackground=C_ACCENT, relief="flat", font=(ui_font, 10)).pack(
-        ipady=5, padx=8
-    )
+        col_pt = QVBoxLayout()
+        col_pt.setSpacing(5)
+        l_pt = self._bind_tr(QLabel(), "lbl_port")
+        l_pt.setObjectName("FieldLabel")
+        self.ed_ftp_port = QLineEdit(self.prefs.get("ftp_port", "2121"))
+        self.ed_ftp_port.setFixedWidth(110)
+        self.ed_ftp_port.setMinimumHeight(40)
+        col_pt.addWidget(l_pt)
+        col_pt.addWidget(self.ed_ftp_port)
 
-    for k_txt, bkey in (("chk_ftp_sh", "ftp_shaders"), ("chk_ftp_ini", "ftp_ini"), ("chk_ftp_romfs", "ftp_romfs")):
-        cb = tk.Checkbutton(
-            c_ftp,
-            variable=bool_map[bkey],
-            bg=C_CARD,
-            fg=C_TEXT,
-            selectcolor=C_INPUT,
-            activebackground=C_CARD,
-            activeforeground=C_ACCENT,
-            highlightthickness=0,
-            font=(ui_font, 9),
-            anchor="w",
-            cursor="hand2",
-        )
-        bind_tr(cb, k_txt)
-        cb.pack(fill="x", pady=3)
+        col_btn = QVBoxLayout()
+        col_btn.setSpacing(5)
+        col_btn.addWidget(QLabel(""))
+        btn_conn = self._bind_tr(QPushButton(), "btn_connect_ps5")
+        btn_conn.setObjectName("PrimaryEmerald")
+        btn_conn.setMinimumHeight(40)
+        btn_conn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_conn.clicked.connect(lambda: self.open_ps5_connect_modal(startup=False))
+        col_btn.addWidget(btn_conn)
+
+        row.addLayout(col_ip, 1)
+        row.addLayout(col_pt)
+        row.addLayout(col_btn)
+        f_lay.addLayout(row)
+
+        self.chk_ftp_sh = self._bind_tr(QCheckBox(), "chk_ftp_sh")
+        self.chk_ftp_sh.setChecked(True)
+        self.chk_ftp_ini = self._bind_tr(QCheckBox(), "chk_ftp_ini")
+        self.chk_ftp_ini.setChecked(True)
+        self.chk_ftp_romfs = self._bind_tr(QCheckBox(), "chk_ftp_romfs")
+        self.chk_ftp_romfs.setChecked(False)
+        for c in (self.chk_ftp_sh, self.chk_ftp_ini, self.chk_ftp_romfs):
+            f_lay.addWidget(c)
+
+        lay.addWidget(c_ftp)
+        lay.addStretch(1)
+        self._page_indices["ftp"] = self.stack.addWidget(scroll)
 
     # ================ PAGE 4: LAYOUT & ARTWORK ================
-    p_layout = tk.Frame(page_host, bg=C_BG)
-    pages["layout"] = p_layout
+    def _build_page_layout(self) -> None:
+        scroll, lay = self._wrap_scroll_page(max_width=1020)
+        ey = self._bind_tr(QLabel(), "p_lay_eyebrow")
+        ey.setObjectName("Eyebrow")
+        h = self._bind_tr(QLabel(), "p_lay_h")
+        h.setObjectName("PageTitle")
+        sub = self._bind_tr(QLabel(), "p_lay_s")
+        sub.setObjectName("PageSub")
+        sub.setWordWrap(True)
+        lay.addWidget(ey)
+        lay.addWidget(h)
+        lay.addWidget(sub)
 
-    bind_tr(tk.Label(p_layout, bg=C_BG, fg=C_TEXT, font=(ui_font, 15, "bold"), anchor="w"), "p_lay_h").pack(fill="x")
-    bind_tr(tk.Label(p_layout, bg=C_BG, fg=C_MUTED, font=(ui_font, 9), anchor="w"), "p_lay_s").pack(fill="x", pady=(2, 10))
+        c_art, a_lay = self._make_card("c_art_t", "c_art_s")
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        self.ed_art_url = QLineEdit()
+        self.ed_art_url.setMinimumHeight(38)
+        self.ed_art_url.setPlaceholderText("https://.../icon0.png")
+        b_art = self._bind_tr(QPushButton(), "btn_art_dl")
+        b_art.setObjectName("PrimaryGold")
+        b_art.setMinimumHeight(38)
+        b_art.setCursor(Qt.CursorShape.PointingHandCursor)
+        b_art.clicked.connect(self._fetch_art_url)
+        row.addWidget(self.ed_art_url, 1)
+        row.addWidget(b_art)
+        a_lay.addLayout(row)
+        lay.addWidget(c_art)
 
-    c_art = make_card(p_layout, "c_art_t", "c_art_s")
-    art_row = tk.Frame(c_art, bg=C_CARD)
-    art_row.pack(fill="x")
-    bind_tr(tk.Label(art_row, bg=C_CARD, fg=C_MUTED, font=(ui_font, 9)), "lbl_art_url").pack(side="left", padx=(0, 8))
-    art_wrap = tk.Frame(art_row, bg=C_BORDER, padx=1, pady=1)
-    art_wrap.pack(side="left", fill="x", expand=True, padx=(0, 8))
-    tk.Entry(art_wrap, textvariable=vars_map["art_url"], bg=C_INPUT, fg=C_TEXT, insertbackground=C_ACCENT, relief="flat", font=(ui_font, 9)).pack(
-        fill="x", ipady=4, padx=6
-    )
+        layout_txt = QPlainTextEdit(PS5_LAYOUT_TEXT)
+        layout_txt.setObjectName("Terminal")
+        layout_txt.setReadOnly(True)
+        layout_txt.setMinimumHeight(340)
+        lay.addWidget(layout_txt, 1)
+        self._page_indices["layout"] = self.stack.addWidget(scroll)
 
-    def _fetch_art_url() -> None:
-        url = vars_map["art_url"].get().strip()
+    # ---- Navigation & Localization ----
+    def select_page(self, key: str) -> None:
+        self.stack.setCurrentIndex(self._page_indices[key])
+        for k, item in self.nav_items.items():
+            item.set_active(k == key)
+        if key == "mods":
+            self.dock.hide()
+            if not self.gb_all_results:
+                self.run_gb_search()
+        else:
+            self.dock.show()
+
+    def apply_language(self, code: str) -> None:
+        self.lang = code
+        self.prefs["lang"] = code
+        _save_prefs(self.prefs)
+        self.setWindowTitle(self.tr_key("win_title"))
+
+        act_style = f"background-color: {C_ACCENT}; color: #051710; border: none; border-radius: 5px; font-weight: 700; font-size: 12px;"
+        off_style = f"background-color: transparent; color: {C_MUTED}; border: none; border-radius: 5px; font-weight: 600; font-size: 12px;"
+        self.btn_es.setStyleSheet(act_style if code == "es" else off_style)
+        self.btn_en.setStyleSheet(act_style if code == "en" else off_style)
+
+        for w, key in self._tr_bindings:
+            if hasattr(w, "setText"):
+                w.setText(self.tr_key(key))  # type: ignore[attr-defined]
+
+        for key, _, _, tk_k, sk_k in [
+            ("build", "", "", "nav_build_t", "nav_build_s"),
+            ("mods", "", "", "nav_mods_t", "nav_mods_s"),
+            ("ftp", "", "", "nav_ftp_t", "nav_ftp_s"),
+            ("layout", "", "", "nav_layout_t", "nav_layout_s"),
+        ]:
+            self.nav_items[key].set_texts(self.tr_key(tk_k), self.tr_key(sk_k))
+
+        self.ed_gb_query.setPlaceholderText(self.tr_key("search_ph"))
+        self.btn_sub_browse.setText(self.tr_key("tab_gb_browse"))
+        self.lbl_status_sub.setText(self.tr_key("status_sub"))
+        self.btn_sb_conn.setText(f"🔌  {self.tr_key('btn_connect_ps5')}")
+        if not self.ps5_connected:
+            self.lbl_status_dot.setText(self.tr_key("status_ready"))
+        self._refresh_cat_tabs()
+        self._update_installed_tab_label()
+        self._rebuild_installed_lists()
+
+    # ---- PS5 Connection Handling ----
+    def open_ps5_connect_modal(self, *, startup: bool = False, on_connected: Callable[[], None] | None = None) -> None:
+        dlg = PS5ConnectDialog(
+            self,
+            self.tr_key,
+            self.ed_ftp_host.text().strip(),
+            self.ed_ftp_port.text().strip() or "2121",
+            startup=startup,
+        )
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.ed_ftp_host.setText(dlg.connected_host)
+            self.ed_ftp_port.setText(str(dlg.connected_port))
+            self.prefs["ftp_host"] = dlg.connected_host
+            self.prefs["ftp_port"] = str(dlg.connected_port)
+            _save_prefs(self.prefs)
+            self.ps5_connected = True
+            self.ps5_mods = dlg.ps5_mods
+            self.lbl_status_dot.setText(f"●  PS5 ({dlg.connected_host})")
+            self.lbl_status_dot.setStyleSheet(f"font-size: 12.5px; font-weight: 700; color: {C_ACCENT};")
+            self._update_installed_tab_label()
+            self._rebuild_installed_lists()
+            self.append_log(f"[ok] PS5 connected at {dlg.connected_host}:{dlg.connected_port} ({len(self.ps5_mods)} mods installed).\n")
+            if on_connected:
+                on_connected()
+
+    # ---- GameBanana Browser & Mod Actions ----
+    def _select_mods_sub(self, idx: int) -> None:
+        self.mods_stack.setCurrentIndex(idx)
+        self.btn_sub_browse.setProperty("active", "true" if idx == 0 else "false")
+        self.btn_sub_inst.setProperty("active", "true" if idx == 1 else "false")
+        for b in (self.btn_sub_browse, self.btn_sub_inst):
+            b.style().unpolish(b)
+            b.style().polish(b)
+
+    def _update_installed_tab_label(self) -> None:
+        self.btn_sub_inst.setText(f"{self.tr_key('tab_gb_installed')} ({len(self.ps5_mods)}/{len(self.local_mods)})")
+
+    def _refresh_cat_tabs(self) -> None:
+        is_es = self.lang == "es"
+        for key_c, es_l, en_l in GB_CATEGORIES:
+            btn = self.cat_buttons[key_c]
+            cnt = sum(1 for m in self.gb_all_results if match_category(m, key_c)) if self.gb_all_results else 0
+            label = f"{es_l if is_es else en_l} ({cnt})" if self.gb_all_results else (es_l if is_es else en_l)
+            btn.setText(label.replace("&", "&&"))
+            btn.setProperty("active", "true" if key_c == self.gb_cat else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def _select_gb_cat(self, cat_key: str) -> None:
+        self.gb_cat = cat_key
+        self._refresh_cat_tabs()
+        if self.gb_all_results:
+            self._render_gb_grid([m for m in self.gb_all_results if match_category(m, cat_key)])
+        else:
+            self.run_gb_search()
+
+    def run_gb_search(self) -> None:
+        query = self.ed_gb_query.text().strip()
+        sort = self.cb_gb_sort.currentText() or "default"
+        self.lbl_mods_foot.setText("⏳  Cargando mods de Tears of the Kingdom desde GameBanana..." if self.lang == "es" else "⏳  Loading Tears of the Kingdom mods from GameBanana...")
+
+        w = FnWorker(lambda: search_mods(query=query, page=1, sort=sort, category="all", max_pages=3), self)
+        w.done.connect(self._on_gb_results)
+        w.failed.connect(lambda err: self.lbl_mods_foot.setText(f"✖  Error GameBanana: {err}"))
+        self.active_workers.append(w)
+        w.start()
+
+    def _on_gb_results(self, mods: object) -> None:
+        if not isinstance(mods, list):
+            return
+        self.gb_all_results = mods
+        is_es = self.lang == "es"
+        self.lbl_mods_count.setText(
+            f"{len(mods)} mods encontrados en GameBanana (Tears of the Kingdom)"
+            if is_es
+            else f"{len(mods)} mods found on GameBanana (Tears of the Kingdom)"
+        )
+        self._refresh_cat_tabs()
+        self._render_gb_grid([m for m in mods if match_category(m, self.gb_cat)])
+
+    def _render_gb_grid(self, mods: list[GBMod]) -> None:
+        if self._thumb_worker is not None:
+            self._thumb_worker.cancel()
+        while self.gb_grid_lay.count():
+            it = self.gb_grid_lay.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.deleteLater()
+        self.gb_rows_by_url.clear()
+
+        missing_urls: list[str] = []
+        inst_lbl = self.tr_key("btn_install")
+        for idx, m in enumerate(mods):
+            r, c = divmod(idx, 2)
+            cached = self.gb_thumb_cache.get(m.thumb_url) if m.thumb_url else None
+            row = EditorialModRow(m, inst_lbl, cached_pm=cached)
+            row.open_detail.connect(self._open_mod_detail)
+            row.install_clicked.connect(lambda mod_obj: self._install_gb_mod(mod_obj, None))
+            self.gb_grid_lay.addWidget(row, r, c)
+            if m.thumb_url and cached is None:
+                self.gb_rows_by_url.setdefault(m.thumb_url, []).append(row)
+                if m.thumb_url not in missing_urls:
+                    missing_urls.append(m.thumb_url)
+
+        self.gb_grid_lay.setRowStretch((len(mods) + 1) // 2, 1)
+        is_es = self.lang == "es"
+        self.lbl_mods_foot.setText(
+            f"●  {len(mods)} mods mostrados · Haz clic en cualquier mod para ver su galería y descripción completa."
+            if is_es
+            else f"●  {len(mods)} mods shown · Click any mod to view its gallery and full description."
+        )
+
+        if missing_urls:
+            tw = ThumbBatchWorker(missing_urls, self)
+            tw.thumb_ready.connect(self._on_thumb_loaded)
+            self._thumb_worker = tw
+            tw.start()
+
+    def _on_thumb_loaded(self, url: str, raw: bytes) -> None:
+        pm = QPixmap()
+        if not pm.loadFromData(raw):
+            return
+        rounded = _rounded_pixmap(pm, 96, 54, radius=6)
+        self.gb_thumb_cache[url] = rounded
+        for row in self.gb_rows_by_url.get(url, []):
+            try:
+                row.set_thumb(rounded)
+            except RuntimeError:
+                pass
+
+    def _open_mod_detail(self, mod: GBMod) -> None:
+        cached = self.gb_detail_cache.get((mod.mod_id, mod.wip))
+        dlg = ModDetailDialog(
+            self,
+            mod,
+            self.tr_key,
+            self.lang == "es",
+            cached,
+            on_detail_loaded=lambda d: self.gb_detail_cache.__setitem__((mod.mod_id, mod.wip), d),
+            on_install=self._install_gb_mod,
+        )
+        dlg.exec()
+
+    def _install_gb_mod(self, mod: GBMod, chosen_file: GBFile | None) -> None:
+        if not self.ps5_connected:
+            self.open_ps5_connect_modal(startup=False, on_connected=lambda: self._install_gb_mod(mod, chosen_file))
+            return
+
+        host = self.ed_ftp_host.text().strip()
+        port = int(self.ed_ftp_port.text().strip() or "2121")
+        out_root = Path(self.ed_out.text().strip() or str(Path.home() / "TOTK-PS5-Out")) / "data_totk_ps5" / "mods"
+        self.lbl_mods_foot.setText(f"⬇  Descargando e instalando {mod.name} en PS5...")
+
+        def _work() -> tuple[str, list[str]]:
+            target_file = chosen_file
+            if target_file is None:
+                detail = self.gb_detail_cache.get((mod.mod_id, mod.wip))
+                files = detail.files if (detail and detail.files) else fetch_mod_files(mod.mod_id, wip=mod.wip)
+                if not files:
+                    raise RuntimeError("Este mod no tiene archivos descargables.")
+                target_file = files[0]
+            staged_dir, _warns = download_and_stage_mod(target_file, mod.name, out_root, log_fn=lambda _m: None)
+            dep = PS5Deployer(host, port, log_fn=lambda _m: None)
+            try:
+                dep.mkdir_p(f"/data/totk-ps5/mods/{staged_dir.name}")
+                dep.chmod_777(f"/data/totk-ps5/mods/{staged_dir.name}")
+                dep.upload_dir(staged_dir, f"/data/totk-ps5/mods/{staged_dir.name}")
+                dirs = dep.list_dirs("/data/totk-ps5/mods")
+            finally:
+                dep.close()
+            return str(staged_dir), dirs
+
+        w = FnWorker(_work, self)
+        w.done.connect(lambda res: self._on_mod_installed(mod.name, res))
+        w.failed.connect(lambda err: self.lbl_mods_foot.setText(f"✖  Error instalando {mod.name}: {err}"))
+        self.active_workers.append(w)
+        w.start()
+
+    def _on_mod_installed(self, mod_name: str, res: object) -> None:
+        if isinstance(res, tuple):
+            staged_str, dirs = res
+            if staged_str not in self.local_mods:
+                self.local_mods.append(staged_str)
+            self.ps5_mods = list(dirs)
+            self._update_installed_tab_label()
+            self._rebuild_installed_lists()
+            self.lbl_mods_foot.setText(f"✔  {mod_name} instalado en tu PS5 (/data/totk-ps5/mods/).")
+
+    def _rebuild_installed_lists(self) -> None:
+        for host_lay in (self.ps5_mods_host, self.local_mods_host):
+            while host_lay.count():
+                it = host_lay.takeAt(0)
+                w = it.widget()
+                if w is not None:
+                    w.deleteLater()
+
+        if not self.ps5_mods:
+            emp = QLabel(self.tr_key("ps5_mods_empty"))
+            emp.setStyleSheet(f"color: {C_MUTED}; font-size: 13px; padding: 10px 0;")
+            self.ps5_mods_host.addWidget(emp)
+        else:
+            for name in self.ps5_mods:
+                row = QFrame()
+                row.setStyleSheet("QFrame { border-bottom: 1px solid #1C273A; }")
+                rl = QHBoxLayout(row)
+                rl.setContentsMargins(4, 10, 4, 10)
+                lbl = QLabel(f"📦  {name}")
+                lbl.setStyleSheet(f"font-size: 13.5px; font-weight: 600; color: {C_TEXT};")
+                btn = QPushButton(self.tr_key("btn_delete"))
+                btn.setObjectName("DangerBtn")
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn.clicked.connect(lambda _c=False, n=name: self._delete_ps5_mod(n))
+                rl.addWidget(lbl, 1)
+                rl.addWidget(btn)
+                self.ps5_mods_host.addWidget(row)
+
+        if not self.local_mods:
+            emp2 = QLabel(self.tr_key("local_mods_empty"))
+            emp2.setStyleSheet(f"color: {C_MUTED}; font-size: 13px; padding: 10px 0;")
+            self.local_mods_host.addWidget(emp2)
+        else:
+            for p_str in self.local_mods:
+                row = QFrame()
+                row.setStyleSheet("QFrame { border-bottom: 1px solid #1C273A; }")
+                rl = QHBoxLayout(row)
+                rl.setContentsMargins(4, 10, 4, 10)
+                lbl = QLabel(p_str)
+                lbl.setStyleSheet(f"font-size: 13px; color: {C_TEXT_BODY};")
+                btn = QPushButton(self.tr_key("btn_remove"))
+                btn.setObjectName("DangerBtn")
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn.clicked.connect(lambda _c=False, p=p_str: self._remove_local_mod(p))
+                rl.addWidget(lbl, 1)
+                rl.addWidget(btn)
+                self.local_mods_host.addWidget(row)
+
+    def _add_local_zip(self) -> None:
+        p, _ = QFileDialog.getOpenFileName(self, self.tr_key("btn_add_zip"), str(Path.home()), "ZIP Archives (*.zip)")
+        if p and p not in self.local_mods:
+            self.local_mods.append(p)
+            self._update_installed_tab_label()
+            self._rebuild_installed_lists()
+
+    def _add_local_dir(self) -> None:
+        p = QFileDialog.getExistingDirectory(self, self.tr_key("btn_add_dir"), str(Path.home()))
+        if p and p not in self.local_mods:
+            self.local_mods.append(p)
+            self._update_installed_tab_label()
+            self._rebuild_installed_lists()
+
+    def _remove_local_mod(self, p: str) -> None:
+        if p in self.local_mods:
+            self.local_mods.remove(p)
+            self._update_installed_tab_label()
+            self._rebuild_installed_lists()
+
+    def refresh_ps5_mods(self) -> None:
+        if not self.ps5_connected:
+            self.open_ps5_connect_modal(startup=False, on_connected=self.refresh_ps5_mods)
+            return
+        host = self.ed_ftp_host.text().strip()
+        port = int(self.ed_ftp_port.text().strip() or "2121")
+
+        def _work() -> list[str]:
+            dep = PS5Deployer(host, port, timeout=10, log_fn=lambda _m: None)
+            try:
+                return dep.list_dirs("/data/totk-ps5/mods")
+            finally:
+                dep.close()
+
+        w = FnWorker(_work, self)
+        w.done.connect(self._on_ps5_mods_refreshed)
+        self.active_workers.append(w)
+        w.start()
+
+    def _on_ps5_mods_refreshed(self, dirs: object) -> None:
+        if isinstance(dirs, list):
+            self.ps5_mods = dirs
+            self._update_installed_tab_label()
+            self._rebuild_installed_lists()
+
+    def _delete_ps5_mod(self, mod_name: str) -> None:
+        if not self.ps5_connected:
+            self.open_ps5_connect_modal(startup=False)
+            return
+        ans = QMessageBox.question(self, self.tr_key("del_confirm_t"), self.tr_key("del_confirm_m").format(name=mod_name))
+        if ans != QMessageBox.StandardButton.Yes:
+            return
+        host = self.ed_ftp_host.text().strip()
+        port = int(self.ed_ftp_port.text().strip() or "2121")
+
+        def _work() -> list[str]:
+            dep = PS5Deployer(host, port, log_fn=lambda _m: None)
+            try:
+                dep.rm_rf(f"/data/totk-ps5/mods/{mod_name}")
+                return dep.list_dirs("/data/totk-ps5/mods")
+            finally:
+                dep.close()
+
+        w = FnWorker(_work, self)
+        w.done.connect(self._on_ps5_mods_refreshed)
+        self.active_workers.append(w)
+        w.start()
+
+    def push_staged_mods_to_ps5(self) -> None:
+        if not self.ps5_connected:
+            self.open_ps5_connect_modal(startup=False, on_connected=self.push_staged_mods_to_ps5)
+            return
+        host = self.ed_ftp_host.text().strip()
+        port = int(self.ed_ftp_port.text().strip() or "2121")
+        out_mods = Path(self.ed_out.text().strip() or str(Path.home() / "TOTK-PS5-Out")) / "data_totk_ps5" / "mods"
+        if not out_mods.is_dir():
+            QMessageBox.information(self, "Mods", "No hay mods en la carpeta de salida todavía." if self.lang == "es" else "No staged mods directory found yet.")
+            return
+
+        def _work() -> list[str]:
+            dep = PS5Deployer(host, port, log_fn=lambda _m: None)
+            try:
+                dep.mkdir_p("/data/totk-ps5/mods")
+                dep.chmod_777("/data/totk-ps5/mods")
+                dep.upload_dir(out_mods, "/data/totk-ps5/mods")
+                return dep.list_dirs("/data/totk-ps5/mods")
+            finally:
+                dep.close()
+
+        w = FnWorker(_work, self)
+        w.done.connect(self._on_ps5_mods_refreshed)
+        self.active_workers.append(w)
+        w.start()
+
+    def _fetch_art_url(self) -> None:
+        url = self.ed_art_url.text().strip()
         if not url:
             return
-        dest = Path(vars_map["out"].get().strip() or str(Path.home() / "TOTK-PS5-Out")) / TITLE_ID / "sce_sys" / "icon0.png"
-        q.put(f">>> Downloading custom PS5 icon0.png from {url}...\n")
+        dest = Path(self.ed_out.text().strip() or str(Path.home() / "TOTK-PS5-Out")) / TITLE_ID / "sce_sys" / "icon0.png"
+        self.append_log(f">>> Downloading custom PS5 icon0.png from {url}...\n")
 
-        def worker() -> None:
-            try:
-                download_ps5_icon_from_url(url, dest)
-                q.put(f"[ok] Saved 512x512 PS5 icon0.png -> {dest}\n")
-                new_logo = _load_logo(dest, size=50)
-                if new_logo is not None:
-                    def _upd() -> None:
-                        logo_lbl.configure(image=new_logo)
-                        logo_lbl.image = new_logo  # type: ignore[attr-defined]
-                    root.after(0, _upd)
-            except Exception as exc:
-                q.put(f"[err] Icon download failed: {exc}\n")
+        w = FnWorker(lambda: (download_ps5_icon_from_url(url, dest), str(dest))[1], self)
+        w.done.connect(self._on_art_done)
+        w.failed.connect(lambda err: self.append_log(f"[err] Icon download failed: {err}\n"))
+        self.active_workers.append(w)
+        w.start()
 
-        threading.Thread(target=worker, daemon=True).start()
+    def _on_art_done(self, dest_str: object) -> None:
+        if isinstance(dest_str, str) and Path(dest_str).is_file():
+            self.lbl_logo.setPixmap(_rounded_pixmap(QPixmap(dest_str), 50, 50, radius=11))
+            self.append_log(f"[ok] Saved 512x512 PS5 icon0.png -> {dest_str}\n")
 
-    b_art = ModernButton(art_row, tr("btn_art_dl"), _fetch_art_url, font_spec=(ui_font, 8, "bold"), padx=10, pady=5)
-    bind_tr(b_art, "btn_art_dl", mode="modern")
-    b_art.pack(side="left")
-
-    lay_card = tk.Frame(p_layout, bg=C_TERM, highlightbackground=C_BORDER, highlightthickness=1, padx=8, pady=8)
-    lay_card.pack(fill="both", expand=True)
-    layout_box = scrolledtext.ScrolledText(
-        lay_card, height=12, bg=C_TERM, fg="#CBD5E1", relief="flat", borderwidth=0, font=(mono_font, 9)
-    )
-    layout_box.insert("1.0", PS5_LAYOUT_TEXT)
-    layout_box.config(state="disabled")
-    layout_box.pack(fill="both", expand=True)
-
-    # ================ BOTTOM CONSOLE & ACTION DOCK ================
-    dock = tk.Frame(main_col, bg=C_BG, padx=22, pady=10)
-    dock.pack(side="bottom", fill="x")
-
-    pbar = ttk.Progressbar(dock, mode="indeterminate", style="Zonai.Horizontal.TProgressbar")
-    pbar.pack(fill="x", pady=(0, 7))
-
-    term_card = tk.Frame(dock, bg=C_TERM, highlightbackground=C_BORDER, highlightthickness=1, padx=8, pady=6)
-    term_card.pack(fill="x", pady=(0, 9))
-    log_box = scrolledtext.ScrolledText(
-        term_card, height=7, bg=C_TERM, fg="#CBD5E1", insertbackground=C_ACCENT, relief="flat", borderwidth=0, font=(mono_font, 9)
-    )
-    log_box.tag_config("ok", foreground=C_ACCENT)
-    log_box.tag_config("info", foreground=C_BLUE)
-    log_box.tag_config("gold", foreground=C_GOLD)
-    log_box.tag_config("err", foreground=C_DANGER)
-    log_box.pack(fill="x")
-
-    action_buttons: list[ModernButton] = []
-
-    def set_busy(busy: bool, msg: str = "") -> None:
-        for b in action_buttons:
-            b.set_enabled(not busy)
-        if busy:
-            status_dot.configure(text=f"●  {msg or 'Working...'}", fg=C_GOLD)
-            pbar.start(14)
+    # ---- Build & Deploy CLI Orchestration (100% Preserved Logic) ----
+    def append_log(self, text: str) -> None:
+        cur = self.log_box.textCursor()
+        cur.movePosition(QTextCursor.MoveOperation.End)
+        fmt = QTextCharFormat()
+        low = text.lower()
+        if text.startswith("[ok]") or "passed" in low:
+            fmt.setForeground(QColor(C_ACCENT))
+        elif text.startswith("[err]") or "error" in low or "failed" in low:
+            fmt.setForeground(QColor(C_DANGER))
+        elif text.startswith("[ftp]") or text.startswith("[warn]") or text.startswith(">>>"):
+            fmt.setForeground(QColor(C_GOLD))
+        elif text.startswith("[ps5-totk]") or text.startswith("[check]"):
+            fmt.setForeground(QColor(C_BLUE))
         else:
-            status_dot.configure(text=tr("status_ready"), fg=C_ACCENT)
-            pbar.stop()
+            fmt.setForeground(QColor("#CBD5E1"))
+        cur.insertText(text, fmt)
+        self.log_box.setTextCursor(cur)
+        self.log_box.ensureCursorVisible()
 
-    def _insert_colored(line: str) -> None:
-        tag = None
-        low = line.lower()
-        if line.startswith("[ok]") or "passed" in low:
-            tag = "ok"
-        elif line.startswith("[err]") or "error" in low or "failed" in low:
-            tag = "err"
-        elif line.startswith("[ftp]") or line.startswith("[warn]") or line.startswith(">>>"):
-            tag = "gold"
-        elif line.startswith("[ps5-totk]") or line.startswith("[gb]") or line.startswith("[check]"):
-            tag = "info"
-        log_box.insert("end", line, tag) if tag else log_box.insert("end", line)
-        log_box.see("end")
+    def _set_busy(self, busy: bool, label: str = "") -> None:
+        for b in self.action_buttons:
+            b.setEnabled(not busy)
+        if busy:
+            self.pbar.setRange(0, 0)
+            self.lbl_status_dot.setText(f"●  {label}")
+            self.lbl_status_dot.setStyleSheet(f"font-size: 12.5px; font-weight: 700; color: {C_GOLD};")
+        else:
+            self.pbar.setRange(0, 1)
+            self.pbar.setValue(0)
+            if self.ps5_connected:
+                self.lbl_status_dot.setText(f"●  PS5 ({self.ed_ftp_host.text().strip()})")
+            else:
+                self.lbl_status_dot.setText(self.tr_key("status_ready"))
+            self.lbl_status_dot.setStyleSheet(f"font-size: 12.5px; font-weight: 700; color: {C_ACCENT};")
 
-    def pump() -> None:
-        try:
-            while True:
-                item = q.get_nowait()
-                if item is None:
-                    set_busy(False)
-                    break
-                _insert_colored(item)
-        except queue.Empty:
-            pass
-        root.after(100, pump)
-
-    def build_cli_cmd(*, deploy_ftp: bool, deploy_only: bool = False) -> list[str]:
-        cmd = [str(paths.python_bin), "-P", "-u", "-m", "builder.cli", "--out", vars_map["out"].get().strip()]
+    def build_cli_cmd(self, *, deploy_ftp: bool, deploy_only: bool = False) -> list[str]:
+        out_dir = self.ed_out.text().strip() or str(Path.home() / "TOTK-PS5-Out")
+        self.prefs["out"] = out_dir
+        _save_prefs(self.prefs)
+        cmd = [str(self.paths.python_bin), "-P", "-u", "-m", "builder.cli", "--out", out_dir]
         if deploy_only:
             cmd.append("--deploy-only")
         else:
-            if vars_map["game"].get().strip():
-                cmd += ["--game", vars_map["game"].get().strip()]
-                if vars_map["update"].get().strip():
-                    cmd += ["--update", vars_map["update"].get().strip()]
-                if vars_map["keys"].get().strip():
-                    cmd += ["--keys", vars_map["keys"].get().strip()]
+            if self.ed_game.text().strip():
+                cmd += ["--game", self.ed_game.text().strip()]
+                if self.ed_update.text().strip():
+                    cmd += ["--update", self.ed_update.text().strip()]
+                if self.ed_keys.text().strip():
+                    cmd += ["--keys", self.ed_keys.text().strip()]
             else:
-                cmd += ["--exefs", vars_map["exefs"].get().strip()]
-                if vars_map["romfs"].get().strip():
-                    cmd += ["--romfs", vars_map["romfs"].get().strip()]
-            if vars_map["shaders"].get().strip():
-                cmd += ["--shaders", vars_map["shaders"].get().strip()]
-            if not bool_map["prompts"].get():
+                cmd += ["--exefs", self.ed_exefs.text().strip()]
+                if self.ed_romfs.text().strip():
+                    cmd += ["--romfs", self.ed_romfs.text().strip()]
+            if self.ed_shaders.text().strip():
+                cmd += ["--shaders", self.ed_shaders.text().strip()]
+            if not self.chk_prompts.isChecked():
                 cmd.append("--no-prompts")
-            if bool_map["pretranslate_shaders"].get():
+            if self.chk_shaders.isChecked():
                 cmd.append("--pretranslate-shaders")
             cmd += [
                 "--res",
-                vars_map["res"].get(),
+                self.cb_res.currentText(),
                 "--hz",
-                vars_map["hz"].get(),
+                self.cb_hz.currentText(),
                 "--frame-gen",
-                vars_map["frame_gen"].get(),
+                self.cb_fg.currentText(),
                 "--scale",
-                vars_map["scale"].get(),
+                self.cb_scale.currentText(),
                 "--lang",
-                vars_map["lang"].get(),
+                self.cb_lang.currentText(),
             ]
-            for i in range(mods_list.size()):
-                cmd += ["--mod", mods_list.get(i)]
+            for m in self.local_mods:
+                cmd += ["--mod", m]
         if deploy_ftp:
-            cmd += ["--deploy-ftp", vars_map["ftp_host"].get().strip(), "--ftp-port", vars_map["ftp_port"].get().strip()]
-            if bool_map["ftp_romfs"].get():
+            cmd += ["--deploy-ftp", self.ed_ftp_host.text().strip(), "--ftp-port", self.ed_ftp_port.text().strip() or "2121"]
+            if self.chk_ftp_romfs.isChecked():
                 cmd.append("--deploy-romfs")
-            if not bool_map["ftp_shaders"].get():
+            if not self.chk_ftp_sh.isChecked():
                 cmd.append("--skip-ftp-shaders")
-            if not bool_map["ftp_ini"].get():
+            if not self.chk_ftp_ini.isChecked():
                 cmd.append("--skip-ftp-ini")
         return cmd
 
-    def run_cmd_async(cmd: list[str], label: str) -> None:
-        set_busy(True, label)
-        log_box.delete("1.0", "end")
-        _insert_colored(f">>> {label}\n")
-
-        def worker() -> None:
-            try:
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                assert proc.stdout is not None
-                for line in proc.stdout:
-                    q.put(line)
-                rc = proc.wait()
-                q.put(f"\n{'[ok] Done.' if rc == 0 else f'[err] Failed (exit {rc}).'}\n")
-            except Exception as exc:
-                q.put(f"\n[err] {exc}\n")
-            finally:
-                q.put(None)
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _validate(*, need_ftp: bool, deploy_only: bool) -> bool:
+    def _validate(self, *, need_ftp: bool, deploy_only: bool) -> bool:
         if not deploy_only:
-            if not vars_map["game"].get().strip() and not vars_map["exefs"].get().strip():
-                messagebox.showerror(tr("err_no_game_t"), tr("err_no_game_m"))
-                select_page("build")
+            if not self.ed_game.text().strip() and not self.ed_exefs.text().strip():
+                QMessageBox.warning(self, self.tr_key("err_no_game_t"), self.tr_key("err_no_game_m"))
+                self.select_page("build")
                 return False
-            if vars_map["game"].get().strip() and not vars_map["keys"].get().strip():
-                messagebox.showerror(tr("err_no_keys_t"), tr("err_no_keys_m"))
-                select_page("build")
+            if self.ed_game.text().strip() and not self.ed_keys.text().strip():
+                QMessageBox.warning(self, self.tr_key("err_no_keys_t"), self.tr_key("err_no_keys_m"))
+                self.select_page("build")
                 return False
-        if need_ftp and not vars_map["ftp_host"].get().strip():
-            messagebox.showerror(tr("err_no_ip_t"), tr("err_no_ip_m"))
-            select_page("ftp")
-            return False
+        if need_ftp and not self.ed_ftp_host.text().strip():
+            self.open_ps5_connect_modal(startup=False)
+            return bool(self.ed_ftp_host.text().strip())
         return True
 
-    bar_btns = tk.Frame(dock, bg=C_BG)
-    bar_btns.pack(fill="x")
+    def _run_ftp_only(self) -> None:
+        if self._validate(need_ftp=True, deploy_only=True):
+            self.run_cmd_async(self.build_cli_cmd(deploy_ftp=True, deploy_only=True), self.tr_key("btn_ftp_only"))
 
-    b_check = bind_tr(
-        ModernButton(
-            bar_btns,
-            tr("btn_check"),
-            lambda: run_cmd_async([str(paths.python_bin), "-P", "-u", "-m", "builder.cli", "--check"], tr("btn_check")),
-            font_spec=(ui_font, 9, "bold"),
-            padx=14,
-            pady=8,
-        ),
-        "btn_check",
-        mode="modern",
-    )
-    b_check.pack(side="left", padx=(0, 8))
+    def _run_build_only(self) -> None:
+        if self._validate(need_ftp=False, deploy_only=False):
+            self.run_cmd_async(self.build_cli_cmd(deploy_ftp=False), self.tr_key("btn_build"))
 
-    b_ftp = bind_tr(
-        ModernButton(
-            bar_btns,
-            tr("btn_ftp_only"),
-            lambda: _validate(need_ftp=True, deploy_only=True) and run_cmd_async(build_cli_cmd(deploy_ftp=True, deploy_only=True), tr("btn_ftp_only")),
-            font_spec=(ui_font, 9, "bold"),
-            padx=14,
-            pady=8,
-        ),
-        "btn_ftp_only",
-        mode="modern",
-    )
-    b_ftp.pack(side="left")
+    def _run_build_and_ftp(self) -> None:
+        if self._validate(need_ftp=True, deploy_only=False):
+            self.run_cmd_async(self.build_cli_cmd(deploy_ftp=True), self.tr_key("btn_both"))
 
-    b_both = bind_tr(
-        ModernButton(
-            bar_btns,
-            tr("btn_both"),
-            lambda: _validate(need_ftp=True, deploy_only=False) and run_cmd_async(build_cli_cmd(deploy_ftp=True), tr("btn_both")),
-            bg=C_BLUE,
-            hover_bg=C_BLUE_HOV,
-            fg="#05131C",
-            border=C_BLUE,
-            font_spec=(ui_font, 10, "bold"),
-            padx=18,
-            pady=8,
-        ),
-        "btn_both",
-        mode="modern",
-    )
-    b_both.pack(side="right")
+    def run_cmd_async(self, cmd: list[str], label: str) -> None:
+        self._set_busy(True, label)
+        self.log_box.clear()
+        self.append_log(f">>> {label}\n")
+        w = CommandWorker(cmd, self)
+        w.line.connect(self.append_log)
+        w.finished_rc.connect(lambda rc: (self.append_log(f"\n{'[ok] Done.' if rc == 0 else f'[err] Failed (exit {rc}).'}\n"), self._set_busy(False)))
+        self._cmd_worker = w
+        w.start()
 
-    b_build = bind_tr(
-        ModernButton(
-            bar_btns,
-            tr("btn_build"),
-            lambda: _validate(need_ftp=False, deploy_only=False) and run_cmd_async(build_cli_cmd(deploy_ftp=False), tr("btn_build")),
-            bg=C_ACCENT,
-            hover_bg=C_ACCENT_HOV,
-            fg=C_ACCENT_TXT,
-            border=C_ACCENT,
-            font_spec=(ui_font, 10, "bold"),
-            padx=18,
-            pady=8,
-        ),
-        "btn_build",
-        mode="modern",
-    )
-    b_build.pack(side="right", padx=(0, 10))
-    action_buttons.extend([b_check, b_ftp, b_build, b_both])
 
-    apply_language("es")
-    select_page("build")
-    _insert_colored(tr("welcome"))
-    root.after(100, pump)
-    root.after(280, lambda: _open_ps5_connect_modal(startup=True))
-    root.mainloop()
-    return 0
+    def closeEvent(self, ev) -> None:  # noqa: N802
+        if self._thumb_worker is not None:
+            self._thumb_worker.cancel()
+            self._thumb_worker.wait(1500)
+        for w in list(self.active_workers):
+            if w.isRunning():
+                w.quit()
+                w.wait(1000)
+        super().closeEvent(ev)
+
+
+def run_gui() -> int:
+    from PyQt6.QtGui import QPalette
+
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    pal = QPalette()
+    pal.setColor(QPalette.ColorRole.Window, QColor(C_BG))
+    pal.setColor(QPalette.ColorRole.WindowText, QColor(C_TEXT_BODY))
+    pal.setColor(QPalette.ColorRole.Base, QColor(C_INPUT))
+    pal.setColor(QPalette.ColorRole.AlternateBase, QColor(C_CARD))
+    pal.setColor(QPalette.ColorRole.Text, QColor(C_TEXT_BODY))
+    pal.setColor(QPalette.ColorRole.Button, QColor(C_CARD_ALT))
+    pal.setColor(QPalette.ColorRole.ButtonText, QColor(C_TEXT_BODY))
+    app.setPalette(pal)
+    app.setStyleSheet(APP_QSS)
+    win = PS5TotkWindow()
+    win.show()
+    return app.exec()
 
 
 if __name__ == "__main__":
