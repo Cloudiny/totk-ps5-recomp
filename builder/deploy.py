@@ -126,6 +126,47 @@ class PS5Deployer:
             pass
         return sizes
 
+    def list_dirs(self, remote_dir: str) -> list[str]:
+        _assert_safe_remote(remote_dir)
+        dirs: list[str] = []
+        try:
+            lines: list[str] = []
+            self.ftp.retrlines(f"LIST {remote_dir}", lines.append)
+            for line in lines:
+                cols = line.split(None, 8)
+                if len(cols) >= 9 and cols[0].startswith("d"):
+                    name = cols[8].strip()
+                    if name not in (".", ".."):
+                        dirs.append(name)
+        except Exception:
+            pass
+        return sorted(dirs, key=str.lower)
+
+    def rm_rf(self, remote_path: str) -> None:
+        _assert_safe_remote(remote_path)
+        lines: list[str] = []
+        try:
+            self.ftp.retrlines(f"LIST {remote_path}", lines.append)
+        except Exception:
+            self.delete_quiet(remote_path)
+            return
+        for line in lines:
+            cols = line.split(None, 8)
+            if len(cols) < 9:
+                continue
+            name = cols[8].strip()
+            if name in (".", ".."):
+                continue
+            child = f"{remote_path.rstrip('/')}/{name}"
+            if cols[0].startswith("d"):
+                self.rm_rf(child)
+            else:
+                self.delete_quiet(child)
+        try:
+            self.ftp.rmd(remote_path)
+        except Exception:
+            pass
+
     def delete_quiet(self, remote_path: str) -> None:
         _assert_safe_remote(remote_path)
         try:

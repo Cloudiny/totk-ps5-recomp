@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import re
 import shutil
@@ -10,7 +11,7 @@ import tempfile
 import urllib.parse
 import urllib.request
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -54,6 +55,10 @@ class GBMod:
     likes: int
     thumb_url: str
     profile_url: str
+    full_img_url: str = ""
+    views: int = 0
+    wip: bool = False
+    summary: str = ""
 
 
 @dataclass(frozen=True)
@@ -65,47 +70,161 @@ class GBFile:
     description: str
 
 
+@dataclass(frozen=True)
+class GBModDetail:
+    mod_id: int
+    description: str
+    gallery_urls: list[str] = field(default_factory=list)
+    files: list[GBFile] = field(default_factory=list)
+    views: int = 0
+    likes: int = 0
+    author: str = ""
+    category: str = ""
+    profile_url: str = ""
+
+
+GB_CATEGORIES: tuple[tuple[str, str, str], ...] = (
+    ("all", "Todos", "All"),
+    ("gameplay", "Gameplay", "Gameplay"),
+    ("skins", "Trajes & Modelos", "Skins & Models"),
+    ("ui", "UI & HUD", "UI & HUD"),
+    ("audio", "Audio", "Audio"),
+    ("other", "Otros", "Other"),
+)
+
+
+def clean_html_text(raw_html: str) -> str:
+    """Convert GameBanana HTML description text into readable plain text."""
+    if not raw_html:
+        return ""
+    txt = re.sub(r"(?i)<br\s*/?>", "\n", raw_html)
+    txt = re.sub(r"(?i)</(p|div|li|tr|h[1-6]|blockquote)>", "\n", txt)
+    txt = re.sub(r"(?i)<li[^>]*>", "• ", txt)
+    txt = re.sub(r"<[^>]+>", "", txt)
+    txt = html.unescape(txt)
+    txt = txt.replace("\r\n", "\n").replace("\r", "\n")
+    txt = re.sub(r"\n{3,}", "\n\n", txt)
+    return txt.strip()
+
+
+def match_category(mod: GBMod, cat_key: str) -> bool:
+    """Match a GameBanana mod category against our filter key."""
+    if not cat_key or cat_key == "all":
+        return True
+    c = (mod.category or "").lower()
+    is_game = any(k in c for k in ("game", "tweaks", "quest", "overhaul", "map", "dungeon", "shrine"))
+    is_model = any(k in c for k in ("skin", "model", "tex", "armor", "weapon", "character", "pack"))
+    is_audio = any(k in c for k in ("sound", "audio", "music", "voice"))
+    is_ui = any(k in c for k in ("gui", "ui", "hud", "menu", "icon"))
+    if cat_key == "gameplay":
+        return is_game
+    if cat_key == "skins":
+        return is_model
+    if cat_key == "audio":
+        return is_audio
+    if cat_key == "ui":
+        return is_ui
+    if cat_key == "other":
+        return not (is_game or is_model or is_audio or is_ui)
+    return True
+
+
+def fetch_image_bytes(url: str, timeout: int = 6) -> bytes | None:
+    if not url:
+        return None
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read()
+    except Exception:
+        return None
+
+
 def _http_json(url: str, timeout: int = 15) -> dict:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8", errors="replace"))
 
 
-def search_mods(query: str = "", page: int = 1, sort: str = "default") -> list[GBMod]:
-    """Search or browse Tears of the Kingdom mods on GameBanana (API v11)."""
-    params: list[tuple[str, str]] = [
-        ("_nPage", str(max(1, page))),
-        ("_sSort", sort),
-        ("_aModelNames[]", "Mod"),
-    ]
-    if query.strip():
-        params.append(("_sName", query.strip()))
-    url = f"https://gamebanana.com/apiv11/Game/{TOTK_GAME_ID}/Subfeed?{urllib.parse.urlencode(params)}"
-    data = _http_json(url)
-    out: list[GBMod] = []
-    for rec in data.get("_aRecords") or []:
-        mod_id = int(rec.get("_idRow") or 0)
-        if not mod_id:
+def _parse_images(rec: dict) -> tuple[str, str, list[str]]:
+    imgs = (rec.get("_aPreviewMedia") or {}).get("_aImages") or []
+    thumb = ""
+    full = ""
+    gallery: list[str] = []
+    for idx, im in enumerate(imgs):
+        if not isinstance(im, dict):
             continue
-        name = str(rec.get("_sName") or f"Mod #{mod_id}")
-        cat = str((rec.get("_aRootCategory") or {}).get("_sName") or "Mod")
-        author = str((rec.get("_aSubmitter") or {}).get("_sName") or "Unknown")
-        likes = int(rec.get("_nLikeCount") or 0)
-        thumb = ""
-        imgs = (rec.get("_aPreviewMedia") or {}).get("_aImages") or []
-        if imgs and isinstance(imgs[0], dict):
-            base = str(imgs[0].get("_sBaseUrl") or "")
-            f220 = str(imgs[0].get("_sFile220") or imgs[0].get("_sFile") or "")
-            if base and f220:
-                thumb = f"{base}/{f220}"
-        profile_url = str(rec.get("_sProfileUrl") or f"https://gamebanana.com/mods/{mod_id}")
-        out.append(GBMod(mod_id, name, cat, author, likes, thumb, profile_url))
+        base = str(im.get("_sBaseUrl") or "").rstrip("/")
+        if not base:
+            continue
+        tfn = str(im.get("_sFile220") or im.get("_sFile100") or im.get("_sFile") or "").lstrip("/")
+        ffn = str(im.get("_sFile530") or im.get("_sFile") or im.get("_sFile220") or "").lstrip("/")
+        if idx == 0:
+            if tfn:
+                thumb = f"{base}/{tfn}"
+            if ffn:
+                full = f"{base}/{ffn}"
+        if ffn and len(gallery) < 5:
+            gallery.append(f"{base}/{ffn}")
+    return thumb, full, gallery
+
+
+def search_mods(query: str = "", page: int = 1, sort: str = "default", category: str = "all") -> list[GBMod]:
+    """Search or browse Tears of the Kingdom mods on GameBanana (API v11)."""
+    q_clean = query.strip()
+    out: list[GBMod] = []
+    seen: set[tuple[int, bool]] = set()
+    pages_to_fetch = 2 if category != "all" else 1
+    for p in range(max(1, page), max(1, page) + pages_to_fetch):
+        if q_clean:
+            params = [
+                ("_sModelName", "Mod"),
+                ("_idGameRow", str(TOTK_GAME_ID)),
+                ("_sOrder", "best_match"),
+                ("_nPage", str(p)),
+                ("_sSearchString", q_clean),
+            ]
+            url = f"https://gamebanana.com/apiv11/Util/Search/Results?{urllib.parse.urlencode(params)}"
+        else:
+            params = [
+                ("_nPage", str(p)),
+                ("_sSort", sort),
+                ("_csvModelInclusions", "Mod,Wip"),
+            ]
+            url = f"https://gamebanana.com/apiv11/Game/{TOTK_GAME_ID}/Subfeed?{urllib.parse.urlencode(params)}"
+        data = _http_json(url)
+        records = data.get("_aRecords") or []
+        if not records:
+            break
+        for rec in records:
+            g = rec.get("_aGame") or {}
+            if g and g.get("_idRow") and int(g.get("_idRow")) != TOTK_GAME_ID:
+                continue
+            mod_id = int(rec.get("_idRow") or 0)
+            if not mod_id:
+                continue
+            wip = rec.get("_sModelName") == "Wip"
+            if (mod_id, wip) in seen:
+                continue
+            seen.add((mod_id, wip))
+            name = str(rec.get("_sName") or f"Mod #{mod_id}")
+            cat = str((rec.get("_aRootCategory") or {}).get("_sName") or "Mod")
+            author = str((rec.get("_aSubmitter") or {}).get("_sName") or "Unknown")
+            likes = int(rec.get("_nLikeCount") or 0)
+            views = int(rec.get("_nViewCount") or 0)
+            thumb, full, _ = _parse_images(rec)
+            profile_url = str(rec.get("_sProfileUrl") or f"https://gamebanana.com/{'wips' if wip else 'mods'}/{mod_id}")
+            summary = clean_html_text(str(rec.get("_sDescription") or rec.get("_sText") or ""))[:220]
+            mod = GBMod(mod_id, name, cat, author, likes, thumb, profile_url, full, views, wip, summary)
+            if match_category(mod, category):
+                out.append(mod)
     return out
 
 
-def fetch_mod_files(mod_id: int) -> list[GBFile]:
-    """Fetch downloadable archive files for a specific GameBanana mod."""
-    url = f"https://gamebanana.com/apiv11/Mod/{int(mod_id)}/ProfilePage"
+def fetch_mod_detail(mod_id: int, wip: bool = False) -> GBModDetail:
+    """Fetch full description, preview gallery, and downloadable files for a GameBanana mod."""
+    model = "Wip" if wip else "Mod"
+    url = f"https://gamebanana.com/apiv11/{model}/{int(mod_id)}/ProfilePage"
     data = _http_json(url)
     files: list[GBFile] = []
     for f in data.get("_aFiles") or []:
@@ -121,7 +240,23 @@ def fetch_mod_files(mod_id: int) -> list[GBFile]:
                 description=str(f.get("_sDescription") or ""),
             )
         )
-    return files
+    _, _, gallery = _parse_images(data)
+    return GBModDetail(
+        mod_id=int(mod_id),
+        description=clean_html_text(str(data.get("_sText") or "")),
+        gallery_urls=gallery,
+        files=files,
+        views=int(data.get("_nViewCount") or 0),
+        likes=int(data.get("_nLikeCount") or 0),
+        author=str((data.get("_aSubmitter") or {}).get("_sName") or ""),
+        category=str((data.get("_aCategory") or data.get("_aRootCategory") or {}).get("_sName") or ""),
+        profile_url=str(data.get("_sProfileUrl") or f"https://gamebanana.com/{'wips' if wip else 'mods'}/{mod_id}"),
+    )
+
+
+def fetch_mod_files(mod_id: int, wip: bool = False) -> list[GBFile]:
+    """Fetch downloadable archive files for a specific GameBanana mod."""
+    return fetch_mod_detail(mod_id, wip=wip).files
 
 
 def _slugify(name: str) -> str:
