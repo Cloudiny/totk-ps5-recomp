@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import subprocess
 import sys
@@ -53,23 +54,23 @@ from .pipeline import TITLE_ID, default_kit_paths
 # ---- Local-only UI preferences (never stored inside the repo) ----
 CONFIG_PATH = Path.home() / ".config" / "ps5-totk-builder" / "ui_prefs.json"
 
-# ---- Editorial TOTK × PlayStation Palette ----
-C_BG = "#080C12"
-C_SIDEBAR = "#0D131D"
-C_CARD = "#111824"
-C_CARD_ALT = "#162030"
-C_INPUT = "#0A0F17"
-C_BORDER = "#223047"
-C_GOLD_BORDER = "rgba(230, 195, 106, 0.34)"
+# ---- Pure Tears of the Kingdom (Zonai Emerald × Sky Cyan × Deep Obsidian) Palette ----
+C_BG = "#080D14"
+C_SIDEBAR = "#0C131E"
+C_CARD = "#101926"
+C_CARD_ALT = "#162234"
+C_INPUT = "#0A1019"
+C_BORDER = "#1F3047"
+C_ZONAI_BORDER = "rgba(46, 230, 166, 0.42)"
 
-C_ACCENT = "#2EE6A6"      # Zonai Emerald
-C_GOLD = "#E6C36A"        # Hylian Gold
-C_BLUE = "#38BDF8"        # PS5 Blue
+C_ACCENT = "#2EE6A6"      # Zonai Emerald (Primary TOTK Signature)
+C_GOLD = "#5CE1E6"        # Purah Pad / Sky Cyan (Secondary TOTK Accent — zero OOT sand/brown)
+C_BLUE = "#38BDF8"        # PS5 Sky Blue
 C_CORAL = "#FB7185"       # PS Circle
 C_VIOLET = "#C084FC"      # PS Square
 C_DANGER = "#F87171"
 
-C_TEXT = "#F4EFE2"        # Warm parchment white
+C_TEXT = "#F8FAFC"        # Crisp pure alabaster white
 C_TEXT_BODY = "#E2E8F0"
 C_MUTED = "#94A3B8"
 C_DIM = "#64748B"
@@ -333,12 +334,12 @@ QScrollBar:vertical {{
     margin: 4px 0px 4px 0px;
 }}
 QScrollBar::handle:vertical {{
-    background: rgba(230, 195, 106, 0.35);
+    background: rgba(46, 230, 166, 0.38);
     min-height: 36px;
     border-radius: 4px;
 }}
 QScrollBar::handle:vertical:hover {{
-    background: rgba(230, 195, 106, 0.65);
+    background: rgba(46, 230, 166, 0.68);
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0px;
@@ -361,19 +362,19 @@ QFrame#StatusCard {{
     border-radius: 10px;
 }}
 QFrame#ModalFrame {{
-    background-color: #0D121B;
-    border: 1px solid rgba(230, 195, 106, 0.55);
+    background-color: #0C131D;
+    border: 1px solid rgba(46, 230, 166, 0.55);
     border-radius: 14px;
 }}
 QLabel#Eyebrow {{
     font-family: {SERIF_STACK};
     font-style: italic;
     font-size: 13px;
-    color: {C_GOLD};
+    color: {C_ACCENT};
 }}
 QLabel#PageTitle {{
     font-family: {SERIF_STACK};
-    font-size: 26px;
+    font-size: 25px;
     font-weight: 600;
     color: {C_TEXT};
 }}
@@ -399,28 +400,29 @@ QLabel#FieldLabel {{
 QLineEdit {{
     background-color: {C_INPUT};
     color: #F8FAFC;
-    border: 1px solid #24334B;
+    border: 1px solid #24364F;
     border-radius: 8px;
-    padding: 8px 12px;
+    padding: 6px 12px;
+    min-height: 24px;
     font-size: 13px;
     selection-background-color: {C_ACCENT};
     selection-color: #061610;
 }}
 QLineEdit:focus {{
-    border: 1px solid {C_GOLD};
-    background-color: #0D1420;
+    border: 1px solid {C_ACCENT};
+    background-color: #0D1623;
 }}
 QComboBox {{
     background-color: {C_INPUT};
     color: #F8FAFC;
-    border: 1px solid #24334B;
+    border: 1px solid #24364F;
     border-radius: 8px;
-    padding: 7px 12px;
+    padding: 6px 12px;
     font-size: 13px;
-    min-height: 22px;
+    min-height: 24px;
 }}
 QComboBox:hover {{
-    border: 1px solid rgba(230, 195, 106, 0.65);
+    border: 1px solid {C_ACCENT};
 }}
 QComboBox::drop-down {{
     border: none;
@@ -431,15 +433,15 @@ QComboBox::down-arrow {{
     height: 0px;
     border-left: 5px solid transparent;
     border-right: 5px solid transparent;
-    border-top: 5px solid {C_GOLD};
+    border-top: 5px solid {C_ACCENT};
     margin-right: 10px;
 }}
 QComboBox QAbstractItemView {{
-    background-color: #101724;
+    background-color: #0E1724;
     color: #F8FAFC;
-    border: 1px solid {C_GOLD};
-    selection-background-color: rgba(230, 195, 106, 0.22);
-    selection-color: {C_GOLD};
+    border: 1px solid {C_ACCENT};
+    selection-background-color: rgba(46, 230, 166, 0.22);
+    selection-color: {C_ACCENT};
     padding: 4px;
     outline: none;
 }}
@@ -478,31 +480,31 @@ QPushButton:disabled {{
     border-color: #1A2333;
 }}
 QPushButton#PrimaryEmerald {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3CF0B3, stop:1 #1ECB8E);
+    background-color: #2EE6A6;
     color: #051811;
-    border: 1px solid #4AF4BA;
+    border: 1px solid #5BF2BE;
     font-weight: 700;
 }}
 QPushButton#PrimaryEmerald:hover {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #5CF5C1, stop:1 #2EE6A6);
+    background-color: #4EF0B8;
 }}
 QPushButton#PrimaryGold {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #F4DC8D, stop:1 #C99B3B);
-    color: #191304;
-    border: 1px solid #F7E5A8;
+    background-color: #2EE6A6;
+    color: #051811;
+    border: 1px solid #5BF2BE;
     font-weight: 700;
 }}
 QPushButton#PrimaryGold:hover {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FBE8A9, stop:1 #DAB050);
+    background-color: #4EF0B8;
 }}
 QPushButton#PrimaryBlue {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #58CCFA, stop:1 #25A8E8);
+    background-color: #38BDF8;
     color: #04131D;
     border: 1px solid #75D6FC;
     font-weight: 700;
 }}
 QPushButton#PrimaryBlue:hover {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #79D8FC, stop:1 #38BDF8);
+    background-color: #60CCF9;
 }}
 QPushButton#DangerBtn {{
     background-color: rgba(248, 113, 113, 0.12);
@@ -535,9 +537,9 @@ QPushButton#SubTab:hover {{
     color: {C_TEXT};
 }}
 QPushButton#SubTab[active="true"] {{
-    background-color: rgba(230, 195, 106, 0.12);
+    background-color: rgba(46, 230, 166, 0.14);
     color: {C_TEXT};
-    border: 1px solid {C_GOLD};
+    border: 1px solid {C_ACCENT};
 }}
 QPushButton#CatTab {{
     background: transparent;
@@ -552,21 +554,21 @@ QPushButton#CatTab:hover {{
     color: {C_TEXT};
 }}
 QPushButton#CatTab[active="true"] {{
-    background-color: rgba(230, 195, 106, 0.13);
-    color: {C_GOLD};
-    border: 1px solid rgba(230, 195, 106, 0.65);
+    background-color: rgba(46, 230, 166, 0.14);
+    color: {C_ACCENT};
+    border: 1px solid rgba(46, 230, 166, 0.72);
 }}
 QPushButton#InlineInstall {{
     background: transparent;
-    color: {C_GOLD};
+    color: {C_ACCENT};
     border: none;
     font-size: 13px;
     font-weight: 700;
     padding: 6px 10px;
 }}
 QPushButton#InlineInstall:hover {{
-    color: #FBE8A9;
-    background-color: rgba(230, 195, 106, 0.12);
+    color: #7DF7CB;
+    background-color: rgba(46, 230, 166, 0.14);
     border-radius: 6px;
 }}
 QPlainTextEdit#Terminal {{
@@ -743,19 +745,20 @@ class ThumbBatchWorker(QThread):
         self._cancelled = True
 
     def run(self) -> None:
-        from concurrent.futures import ThreadPoolExecutor
-
         def _fetch(u: str) -> tuple[str, bytes | None]:
             if self._cancelled:
                 return u, None
             return u, fetch_image_bytes(u, timeout=5)
 
-        with ThreadPoolExecutor(max_workers=6) as pool:
-            for url, raw in pool.map(_fetch, self._urls):
-                if self._cancelled:
-                    break
-                if raw:
-                    self.thumb_ready.emit(url, raw)
+        try:
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                for url, raw in pool.map(_fetch, self._urls):
+                    if self._cancelled:
+                        break
+                    if raw:
+                        self.thumb_ready.emit(url, raw)
+        except RuntimeError:
+            pass
 
 
 # ---- PS5 Connection Modal (Startup + On-Demand) ----
@@ -809,6 +812,7 @@ class PS5ConnectDialog(QDialog):
         lbl_ip = QLabel(tr("lbl_ip"))
         lbl_ip.setObjectName("FieldLabel")
         self.ed_ip = QLineEdit(initial_host)
+        self.ed_ip.setMinimumHeight(40)
         self.ed_ip.setPlaceholderText("192.168.1.50")
         self.ed_ip.returnPressed.connect(self._do_connect)
         col_ip.addWidget(lbl_ip)
@@ -820,6 +824,7 @@ class PS5ConnectDialog(QDialog):
         lbl_pt.setObjectName("FieldLabel")
         self.ed_port = QLineEdit(initial_port or "2121")
         self.ed_port.setFixedWidth(96)
+        self.ed_port.setMinimumHeight(40)
         self.ed_port.returnPressed.connect(self._do_connect)
         col_pt.addWidget(lbl_pt)
         col_pt.addWidget(self.ed_port)
@@ -1222,8 +1227,8 @@ class PS5TotkWindow(QMainWindow):
         self._cmd_worker: CommandWorker | None = None
         self._tr_bindings: list[tuple[QObject, str]] = []
 
-        self.setMinimumSize(1120, 740)
-        self.resize(1340, 860)
+        self.setMinimumSize(1160, 820)
+        self.resize(1380, 940)
 
         icon_path = self.paths.assets_sce_sys / "icon0.png"
         if icon_path.is_file():
@@ -1266,8 +1271,8 @@ class PS5TotkWindow(QMainWindow):
         b_col.setSpacing(2)
         b_t = QLabel("TOTK PS5")
         b_t.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {C_TEXT};")
-        b_s = QLabel(f"{TITLE_ID} · PRO")
-        b_s.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {C_GOLD}; letter-spacing: 0.6px;")
+        b_s = QLabel(f"{TITLE_ID} · PS5")
+        b_s.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {C_ACCENT}; letter-spacing: 0.8px;")
         b_col.addWidget(b_t)
         b_col.addWidget(b_s)
         brand_row.addLayout(b_col, 1)
@@ -1365,7 +1370,7 @@ class PS5TotkWindow(QMainWindow):
         self.log_box = QPlainTextEdit()
         self.log_box.setObjectName("Terminal")
         self.log_box.setReadOnly(True)
-        self.log_box.setFixedHeight(112)
+        self.log_box.setFixedHeight(84)
         dock_lay.addWidget(self.log_box)
 
         btn_bar = QHBoxLayout()
@@ -1421,12 +1426,10 @@ class PS5TotkWindow(QMainWindow):
     def _wrap_scroll_page(self, max_width: int = 1040) -> tuple[QScrollArea, QVBoxLayout]:
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.viewport().setStyleSheet(f"background-color: {C_BG};")
         outer = QWidget()
         outer.setObjectName("ScrollCanvas")
-        outer.setStyleSheet(f"QWidget#ScrollCanvas {{ background-color: {C_BG}; }}")
         outer_lay = QHBoxLayout(outer)
-        outer_lay.setContentsMargins(32, 24, 32, 24)
+        outer_lay.setContentsMargins(28, 16, 28, 16)
         outer_lay.setSpacing(0)
 
         content = QWidget()
@@ -1434,7 +1437,7 @@ class PS5TotkWindow(QMainWindow):
             content.setMaximumWidth(max_width)
         lay = QVBoxLayout(content)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(16)
+        lay.setSpacing(12)
 
         outer_lay.addWidget(content, 1)
         if max_width > 0:
@@ -1446,8 +1449,8 @@ class PS5TotkWindow(QMainWindow):
         card = QFrame()
         card.setObjectName("EditorialCard")
         lay = QVBoxLayout(card)
-        lay.setContentsMargins(20, 18, 20, 18)
-        lay.setSpacing(12)
+        lay.setContentsMargins(18, 14, 18, 14)
+        lay.setSpacing(10)
 
         hdr = QHBoxLayout()
         hdr.setSpacing(10)
@@ -1680,10 +1683,8 @@ class PS5TotkWindow(QMainWindow):
         self.gb_scroll = QScrollArea()
         self.gb_scroll.setWidgetResizable(True)
         self.gb_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.gb_scroll.viewport().setStyleSheet(f"background-color: {C_BG};")
         self.gb_grid_host = QWidget()
         self.gb_grid_host.setObjectName("ScrollCanvas")
-        self.gb_grid_host.setStyleSheet(f"QWidget#ScrollCanvas {{ background-color: {C_BG}; }}")
         self.gb_grid_lay = QGridLayout(self.gb_grid_host)
         self.gb_grid_lay.setContentsMargins(0, 4, 10, 12)
         self.gb_grid_lay.setHorizontalSpacing(24)
@@ -1701,10 +1702,8 @@ class PS5TotkWindow(QMainWindow):
         # ---- Sub-page 1: Tus Mods (PS5 Installed + Local Queue, Image 3 style) ----
         inst_scroll = QScrollArea()
         inst_scroll.setWidgetResizable(True)
-        inst_scroll.viewport().setStyleSheet(f"background-color: {C_BG};")
         inst_w = QWidget()
         inst_w.setObjectName("ScrollCanvas")
-        inst_w.setStyleSheet(f"QWidget#ScrollCanvas {{ background-color: {C_BG}; }}")
         inst_lay = QVBoxLayout(inst_w)
         inst_lay.setContentsMargins(0, 6, 12, 12)
         inst_lay.setSpacing(16)
@@ -1912,6 +1911,12 @@ class PS5TotkWindow(QMainWindow):
         self.btn_sb_conn.setText(f"🔌  {self.tr_key('btn_connect_ps5')}")
         if not self.ps5_connected:
             self.lbl_status_dot.setText(self.tr_key("status_ready"))
+        if self.gb_all_results:
+            self.lbl_mods_count.setText(
+                f"{len(self.gb_all_results)} mods encontrados en GameBanana (Tears of the Kingdom)"
+                if code == "es"
+                else f"{len(self.gb_all_results)} mods found on GameBanana (Tears of the Kingdom)"
+            )
         self._refresh_cat_tabs()
         self._update_installed_tab_label()
         self._rebuild_installed_lists()
