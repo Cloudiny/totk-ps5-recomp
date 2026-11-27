@@ -327,6 +327,14 @@ class ModernButton(tk.Frame):
     def set_text(self, text: str) -> None:
         self._inner.configure(text=text)
 
+    def set_palette(self, bg: str, hover_bg: str, fg: str, border: str) -> None:
+        self._bg = bg
+        self._hover_bg = hover_bg
+        self._fg = fg
+        self.configure(bg=border)
+        if self._enabled:
+            self._inner.configure(bg=bg, fg=fg)
+
     def set_enabled(self, enabled: bool) -> None:
         self._enabled = enabled
         self._inner.configure(
