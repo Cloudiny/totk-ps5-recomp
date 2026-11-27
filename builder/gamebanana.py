@@ -169,12 +169,79 @@ def _parse_images(rec: dict) -> tuple[str, str, list[str]]:
     return thumb, full, gallery
 
 
-def search_mods(query: str = "", page: int = 1, sort: str = "default", category: str = "all", max_pages: int = 3) -> list[GBMod]:
+# Categories & keywords that indicate PC-only ReShade, saves, tools, or Switch ExeFS/code patches (.ips/.pchtxt/subsdk)
+_INCOMPATIBLE_CATEGORIES = (
+    "reshade",
+    "shader",
+    "save",
+    "tool",
+    "tutorial",
+    "guide",
+    "cheat",
+    "exefs",
+)
+
+_INCOMPATIBLE_TITLE_RE = re.compile(
+    r"\b("
+    r"reshade|sweetfx|enb|preset|exefs|pchtxt|\.ips\b|subsdk|fps\+\+|"
+    r"60\s*fps|120\s*fps|dynamic\s*fps|ultracam|nx\s*optimizer|totk\s*optimizer|"
+    r"yuzu|ryujinx|cheat|cheats|save\s*file|savegame|mod\s*loader|hsml|"
+    r"freecam|free\s*cam|navi\s+in\s+totk"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_INCOMPATIBLE_DESC_RE = re.compile(
+    r"("
+    r"\bexefs\b|exefs_patches|\.(?:ips|pchtxt|nso|fx|fxh)\b|\bsubsdk\d*\b|"
+    r"rebuild\s+the\s+game|reshade\s+preset|atmosphere/exefs_patches|"
+    r"code\s+patch|exefs\s+patch|switch\s+cheat"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def is_ps5_romfs_compatible(mod: GBMod, detail: GBModDetail | None = None) -> tuple[bool, str]:
+    """Return (compatible, reason) for plug-and-play PS5 RomFS FTP installation."""
+    cat_low = ((detail.category if detail and detail.category else mod.category) or "").lower()
+    for bad_cat in _INCOMPATIBLE_CATEGORIES:
+        if bad_cat in cat_low:
+            return False, f"Category '{mod.category}' is not a PS5 RomFS mod (ReShade/Tools/ExeFS)."
+
+    title_m = _INCOMPATIBLE_TITLE_RE.search(mod.name or "")
+    if title_m:
+        return False, f"Requires ExeFS code patch / PC tool ('{title_m.group(0)}'), not plug-and-play RomFS."
+
+    text_blob = "\n".join(
+        part for part in (mod.summary, detail.description if detail else "") if part
+    )
+    if text_blob:
+        desc_m = _INCOMPATIBLE_DESC_RE.search(text_blob)
+        if desc_m:
+            return False, f"Requires ExeFS / PC patch ('{desc_m.group(0)}') — cannot run via PS5 FTP RomFS alone."
+
+    if detail and detail.files:
+        for f in detail.files:
+            fn = f.filename.lower()
+            if fn.endswith((".pchtxt", ".ips", ".fx", ".ini")) or "reshade" in fn or "exefs" in fn:
+                return False, f"Archive '{f.filename}' is an ExeFS/ReShade patch, not a PS5 RomFS mod."
+
+    return True, ""
+
+
+def search_mods(
+    query: str = "",
+    page: int = 1,
+    sort: str = "default",
+    category: str = "all",
+    max_pages: int = 3,
+    ps5_romfs_only: bool = True,
+) -> list[GBMod]:
     """Search or browse Tears of the Kingdom mods on GameBanana (API v11)."""
     q_clean = query.strip()
     out: list[GBMod] = []
     seen: set[tuple[int, bool]] = set()
-    pages_to_fetch = max(1, max_pages)
+    pages_to_fetch = max(1, max_pages + (1 if ps5_romfs_only else 0))
     for p in range(max(1, page), max(1, page) + pages_to_fetch):
         if q_clean:
             params = [
@@ -216,6 +283,10 @@ def search_mods(query: str = "", page: int = 1, sort: str = "default", category:
             profile_url = str(rec.get("_sProfileUrl") or f"https://gamebanana.com/{'wips' if wip else 'mods'}/{mod_id}")
             summary = clean_html_text(str(rec.get("_sDescription") or rec.get("_sText") or ""))[:220]
             mod = GBMod(mod_id, name, cat, author, likes, thumb, profile_url, full, views, wip, summary)
+            if ps5_romfs_only:
+                ok, _reason = is_ps5_romfs_compatible(mod)
+                if not ok:
+                    continue
             if match_category(mod, category):
                 out.append(mod)
     return out
@@ -312,6 +383,7 @@ def download_and_stage_mod(
     mods_root: Path,
     log_fn: Callable[[str], None] | None = None,
     progress_cb: Callable[[int, int, str], None] | None = None,
+    require_romfs_only: bool = True,
 ) -> tuple[Path, list[str]]:
     """Download a GameBanana mod archive, validate its RomFS payload, and stage into mods_root/<slug>/romfs/.
 
@@ -353,15 +425,26 @@ def download_and_stage_mod(
         all_files = [p for p in extracted.rglob("*") if p.is_file()]
         has_reshade = any(p.suffix.lower() in (".fx", ".fxh") or "reshade" in p.name.lower() for p in all_files)
         has_shader_bin = any(p.suffix.lower() in (".bfsha", ".bnsh") or p.name.endswith(".bfsha.zs") for p in all_files)
-        has_pchtxt = any(p.suffix.lower() == ".pchtxt" for p in all_files)
+        has_exefs_code = any(
+            p.suffix.lower() in (".pchtxt", ".ips", ".nso")
+            or p.name.lower().startswith("subsdk")
+            or any(part.lower() in ("exefs", "exefs_patches") for part in p.relative_to(extracted).parts[:-1])
+            for p in all_files
+        )
         if has_reshade:
             warnings.append("Contains PC ReShade files (.fx/.ini) which do not run on PS5.")
         if has_shader_bin:
             warnings.append(
                 "Mod includes Switch shader archives (.bfsha/.bnsh): PS5 has no runtime shader translator, so new shaders must be pre-translated on PC."
             )
-        if has_pchtxt:
-            warnings.append("Contains Switch ExeFS .pchtxt patches (RomFS overlay only applies RomFS assets).")
+        if has_exefs_code:
+            msg = (
+                "Este mod requiere parches de código ExeFS (.ips / .pchtxt / exefs/) que no se activan solo por FTP en PS5 "
+                "(requieren recompilar eboot.bin en PC)."
+            )
+            if require_romfs_only:
+                raise RuntimeError(msg)
+            warnings.append(msg)
 
         romfs_src = _find_romfs_root(extracted)
         if romfs_src is None:

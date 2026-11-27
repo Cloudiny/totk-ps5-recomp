@@ -46,6 +46,7 @@ from .gamebanana import (
     fetch_image_bytes,
     fetch_mod_detail,
     fetch_mod_files,
+    is_ps5_romfs_compatible,
     match_category,
     search_mods,
 )
@@ -125,6 +126,7 @@ I18N: dict[str, dict[str, str]] = {
         "p_mods_h": "Mods · Tears of the Kingdom",
         "tab_gb_browse": "Explorar",
         "tab_gb_installed": "Tus Mods",
+        "chk_ps5_romfs_only": "Solo mods compatibles PS5 (RomFS)",
         "search_ph": "Buscar mods en GameBanana...",
         "btn_search": "Buscar",
         "btn_install": "Instalar",
@@ -225,6 +227,7 @@ I18N: dict[str, dict[str, str]] = {
         "p_mods_h": "Mods · Tears of the Kingdom",
         "tab_gb_browse": "Browse",
         "tab_gb_installed": "Your Mods",
+        "chk_ps5_romfs_only": "PS5 RomFS-compatible mods only",
         "search_ph": "Search mods on GameBanana...",
         "btn_search": "Search",
         "btn_install": "Install",
@@ -1135,6 +1138,14 @@ class ModDetailDialog(QDialog):
         self.lbl_meta.setStyleSheet(f"font-size: 13.5px; color: {C_MUTED};")
         lay.addWidget(self.lbl_meta)
 
+        self.lbl_compat_warn = QLabel("")
+        self.lbl_compat_warn.setWordWrap(True)
+        self.lbl_compat_warn.setStyleSheet(
+            f"background-color: rgba(248, 113, 113, 0.14); color: #FCA5A5; border: 1px solid {C_DANGER}; border-radius: 8px; padding: 8px 12px; font-size: 12.5px; font-weight: 600;"
+        )
+        self.lbl_compat_warn.hide()
+        lay.addWidget(self.lbl_compat_warn)
+
         self.cb_files = QComboBox()
         self.cb_files.addItem("Cargando archivos..." if is_es else "Loading files...")
         self.cb_files.setMinimumHeight(38)
@@ -1226,6 +1237,21 @@ class ModDetailDialog(QDialog):
             self.cb_files.addItem("Sin archivos descargables" if self._is_es else "No downloadable files")
 
         self.desc.setPlainText(detail.description or self._mod.summary or self._tr("gb_no_desc"))
+
+        ok_ps5, reason = is_ps5_romfs_compatible(self._mod, detail)
+        if not ok_ps5:
+            warn_msg = (
+                f"⚠  No compatible solo por FTP en PS5: {reason}"
+                if self._is_es
+                else f"⚠  Not plug-and-play via PS5 FTP: {reason}"
+            )
+            self.lbl_compat_warn.setText(warn_msg)
+            self.lbl_compat_warn.show()
+            self.btn_inst.setEnabled(False)
+            self.btn_inst.setText("Requiere ExeFS (PC)" if self._is_es else "Requires ExeFS (PC)")
+        else:
+            self.lbl_compat_warn.hide()
+            self.btn_inst.setEnabled(True)
 
         urls = list(detail.gallery_urls)
         if not urls and self._mod.full_img_url:
@@ -1822,6 +1848,10 @@ class PS5TotkWindow(QMainWindow):
         sub_row.addSpacing(12)
         sub_row.addWidget(self.lbl_mods_count)
         sub_row.addStretch(1)
+        self.chk_ps5_only = self._bind_tr(QCheckBox(), "chk_ps5_romfs_only")
+        self.chk_ps5_only.setChecked(True)
+        self.chk_ps5_only.toggled.connect(lambda _c: self.run_gb_search())
+        sub_row.addWidget(self.chk_ps5_only)
         lay.addLayout(sub_row)
 
         # Prominent live install progress banner (always visible across Browse & Your Mods!)
@@ -2185,9 +2215,10 @@ class PS5TotkWindow(QMainWindow):
     def run_gb_search(self) -> None:
         query = self.ed_gb_query.text().strip()
         sort = self.cb_gb_sort.currentText() or "default"
+        ps5_only = self.chk_ps5_only.isChecked()
         self.lbl_mods_foot.setText("⏳  Cargando mods de Tears of the Kingdom desde GameBanana..." if self.lang == "es" else "⏳  Loading Tears of the Kingdom mods from GameBanana...")
 
-        w = FnWorker(lambda: search_mods(query=query, page=1, sort=sort, category="all", max_pages=3), self)
+        w = FnWorker(lambda: search_mods(query=query, page=1, sort=sort, category="all", max_pages=3, ps5_romfs_only=ps5_only), self)
         w.done.connect(self._on_gb_results)
         w.failed.connect(lambda err: self.lbl_mods_foot.setText(f"✖  Error GameBanana: {err}"))
         self.active_workers.append(w)
