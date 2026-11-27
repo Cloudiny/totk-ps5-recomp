@@ -761,6 +761,119 @@ class ThumbBatchWorker(QThread):
             pass
 
 
+class ModInstallWorker(QThread):
+    progress = pyqtSignal(int, int, str)  # (done, total, status_text)
+    done = pyqtSignal(str, list, list)    # (staged_dir, ps5_dirs, warnings)
+    failed = pyqtSignal(str)
+
+    def __init__(
+        self,
+        mod: GBMod,
+        chosen_file: GBFile | None,
+        cached_detail: GBModDetail | None,
+        out_root: Path,
+        host: str,
+        port: int,
+        is_es: bool,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._mod = mod
+        self._chosen = chosen_file
+        self._cached = cached_detail
+        self._out_root = out_root
+        self._host = host
+        self._port = port
+        self._is_es = is_es
+
+    def run(self) -> None:
+        try:
+            target = self._chosen
+            if target is None:
+                self.progress.emit(
+                    0,
+                    0,
+                    f"Consultando archivos de {self._mod.name}..." if self._is_es else f"Fetching files for {self._mod.name}...",
+                )
+                files = self._cached.files if (self._cached and self._cached.files) else fetch_mod_files(self._mod.mod_id, wip=self._mod.wip)
+                if not files:
+                    raise RuntimeError(
+                        "Este mod no tiene archivos descargables directos en GameBanana."
+                        if self._is_es
+                        else "This mod has no direct downloadable archive on GameBanana."
+                    )
+                target = files[0]
+
+            last_emit = [0]
+
+            def _on_prog(cur: int, tot: int, msg: str) -> None:
+                if tot > 0:
+                    pct = int(min(100, (cur * 100) // tot))
+                    if pct != last_emit[0] or cur >= tot:
+                        last_emit[0] = pct
+                        mb_c = cur / (1024 * 1024)
+                        mb_t = tot / (1024 * 1024)
+                        label = (
+                            f"⬇  Descargando {target.filename} — {mb_c:.1f} / {mb_t:.1f} MB ({pct}%)"
+                            if self._is_es
+                            else f"⬇  Downloading {target.filename} — {mb_c:.1f} / {mb_t:.1f} MB ({pct}%)"
+                        )
+                        self.progress.emit(pct, 100, label)
+                else:
+                    label = (
+                        f"📦  Extrayendo RomFS de {target.filename}..."
+                        if self._is_es
+                        else f"📦  Extracting RomFS from {target.filename}..."
+                    )
+                    self.progress.emit(0, 0, label)
+
+            staged_dir, warns = download_and_stage_mod(
+                target,
+                self._mod.name,
+                self._out_root,
+                log_fn=lambda _m: None,
+                progress_cb=_on_prog,
+            )
+
+            all_files = [p for p in staged_dir.rglob("*") if p.is_file()]
+            total_files = max(1, len(all_files))
+            self.progress.emit(
+                0,
+                total_files,
+                f"▲  Subiendo {staged_dir.name} a PS5 (0/{total_files} archivos)..."
+                if self._is_es
+                else f"▲  Uploading {staged_dir.name} to PS5 (0/{total_files} files)...",
+            )
+
+            uploaded = [0]
+
+            def _ftp_log(msg: str) -> None:
+                if msg.startswith("[put]") or msg.startswith("[skip]"):
+                    uploaded[0] += 1
+                    cur_f = min(uploaded[0], total_files)
+                    self.progress.emit(
+                        cur_f,
+                        total_files,
+                        f"▲  Subiendo {staged_dir.name} a PS5 ({cur_f}/{total_files} archivos)..."
+                        if self._is_es
+                        else f"▲  Uploading {staged_dir.name} to PS5 ({cur_f}/{total_files} files)...",
+                    )
+
+            dep = PS5Deployer(self._host, self._port, log_fn=_ftp_log)
+            try:
+                remote_mod = f"/data/totk-ps5/mods/{staged_dir.name}"
+                dep.mkdir_p(remote_mod)
+                dep.chmod_777(remote_mod)
+                dep.upload_dir(staged_dir, remote_mod, force=True)
+                dirs = dep.list_dirs("/data/totk-ps5/mods")
+            finally:
+                dep.close()
+
+            self.done.emit(str(staged_dir), dirs, warns)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 # ---- PS5 Connection Modal (Startup + On-Demand) ----
 class PS5ConnectDialog(QDialog):
     def __init__(
@@ -1658,6 +1771,35 @@ class PS5TotkWindow(QMainWindow):
         sub_row.addStretch(1)
         lay.addLayout(sub_row)
 
+        # Prominent live install progress banner (always visible across Browse & Your Mods!)
+        self.install_banner = QFrame()
+        self.install_banner.setObjectName("InstallBanner")
+        self.install_banner.setStyleSheet(
+            f"QFrame#InstallBanner {{ background-color: #0D1A26; border: 1px solid {C_ACCENT}; border-radius: 10px; }}"
+        )
+        ib_lay = QVBoxLayout(self.install_banner)
+        ib_lay.setContentsMargins(14, 10, 14, 10)
+        ib_lay.setSpacing(6)
+        ib_top = QHBoxLayout()
+        self.lbl_inst_stage = QLabel("")
+        self.lbl_inst_stage.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {C_TEXT};")
+        self.btn_inst_dismiss = QPushButton("✕")
+        self.btn_inst_dismiss.setObjectName("GhostBtn")
+        self.btn_inst_dismiss.setFixedSize(28, 28)
+        self.btn_inst_dismiss.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_inst_dismiss.clicked.connect(self.install_banner.hide)
+        self.btn_inst_dismiss.hide()
+        ib_top.addWidget(self.lbl_inst_stage, 1)
+        ib_top.addWidget(self.btn_inst_dismiss)
+        ib_lay.addLayout(ib_top)
+
+        self.pb_inst = QProgressBar()
+        self.pb_inst.setTextVisible(False)
+        self.pb_inst.setFixedHeight(6)
+        ib_lay.addWidget(self.pb_inst)
+        self.install_banner.hide()
+        lay.addWidget(self.install_banner)
+
         self.mods_stack = QStackedWidget()
         lay.addWidget(self.mods_stack, 1)
 
@@ -1763,9 +1905,18 @@ class PS5TotkWindow(QMainWindow):
         inst_scroll.setWidget(inst_w)
         self.mods_stack.addWidget(inst_scroll)
 
+        self._scan_local_staged_mods()
         self._select_mods_sub(0)
         self._rebuild_installed_lists()
         self._page_indices["mods"] = self.stack.addWidget(page)
+
+    def _scan_local_staged_mods(self) -> None:
+        out_mods = Path(self.ed_out.text().strip() or str(Path.home() / "TOTK-PS5-Out")) / "data_totk_ps5" / "mods"
+        if out_mods.is_dir():
+            for child in sorted(out_mods.iterdir()):
+                if child.is_dir() and str(child) not in self.local_mods:
+                    self.local_mods.append(str(child))
+        self._update_installed_tab_label()
 
     # ================ PAGE 3: DEPLOY TO PS5 (FTP) ================
     def _build_page_ftp(self) -> None:
@@ -2072,42 +2223,78 @@ class PS5TotkWindow(QMainWindow):
         host = self.ed_ftp_host.text().strip()
         port = int(self.ed_ftp_port.text().strip() or "2121")
         out_root = Path(self.ed_out.text().strip() or str(Path.home() / "TOTK-PS5-Out")) / "data_totk_ps5" / "mods"
-        self.lbl_mods_foot.setText(f"⬇  Descargando e instalando {mod.name} en PS5...")
+        is_es = self.lang == "es"
 
-        def _work() -> tuple[str, list[str]]:
-            target_file = chosen_file
-            if target_file is None:
-                detail = self.gb_detail_cache.get((mod.mod_id, mod.wip))
-                files = detail.files if (detail and detail.files) else fetch_mod_files(mod.mod_id, wip=mod.wip)
-                if not files:
-                    raise RuntimeError("Este mod no tiene archivos descargables.")
-                target_file = files[0]
-            staged_dir, _warns = download_and_stage_mod(target_file, mod.name, out_root, log_fn=lambda _m: None)
-            dep = PS5Deployer(host, port, log_fn=lambda _m: None)
-            try:
-                dep.mkdir_p(f"/data/totk-ps5/mods/{staged_dir.name}")
-                dep.chmod_777(f"/data/totk-ps5/mods/{staged_dir.name}")
-                dep.upload_dir(staged_dir, f"/data/totk-ps5/mods/{staged_dir.name}")
-                dirs = dep.list_dirs("/data/totk-ps5/mods")
-            finally:
-                dep.close()
-            return str(staged_dir), dirs
+        self.install_banner.setStyleSheet(
+            f"QFrame#InstallBanner {{ background-color: #0D1A26; border: 1px solid {C_ACCENT}; border-radius: 10px; }}"
+        )
+        self.btn_inst_dismiss.hide()
+        self.lbl_inst_stage.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {C_TEXT};")
+        self.lbl_inst_stage.setText(
+            f"⬇  Preparando descarga de {mod.name}..." if is_es else f"⬇  Preparing download for {mod.name}..."
+        )
+        self.pb_inst.setRange(0, 0)
+        self.install_banner.show()
+        self.lbl_mods_foot.setText(self.lbl_inst_stage.text())
+        self.append_log(f">>> Installing GameBanana mod: {mod.name} -> ps5://{host}:{port}/data/totk-ps5/mods\n")
 
-        w = FnWorker(_work, self)
-        w.done.connect(lambda res: self._on_mod_installed(mod.name, res))
-        w.failed.connect(lambda err: self.lbl_mods_foot.setText(f"✖  Error instalando {mod.name}: {err}"))
+        cached = self.gb_detail_cache.get((mod.mod_id, mod.wip))
+        w = ModInstallWorker(mod, chosen_file, cached, out_root, host, port, is_es, self)
+        w.progress.connect(self._on_mod_install_progress)
+        w.done.connect(lambda staged, dirs, warns: self._on_mod_installed(mod.name, staged, dirs, warns))
+        w.failed.connect(lambda err: self._on_mod_install_failed(mod.name, err))
         self.active_workers.append(w)
         w.start()
 
-    def _on_mod_installed(self, mod_name: str, res: object) -> None:
-        if isinstance(res, tuple):
-            staged_str, dirs = res
-            if staged_str not in self.local_mods:
-                self.local_mods.append(staged_str)
-            self.ps5_mods = list(dirs)
-            self._update_installed_tab_label()
-            self._rebuild_installed_lists()
-            self.lbl_mods_foot.setText(f"✔  {mod_name} instalado en tu PS5 (/data/totk-ps5/mods/).")
+    def _on_mod_install_progress(self, cur: int, tot: int, text: str) -> None:
+        self.lbl_inst_stage.setText(text)
+        self.lbl_mods_foot.setText(text)
+        if tot > 0:
+            self.pb_inst.setRange(0, tot)
+            self.pb_inst.setValue(cur)
+        else:
+            self.pb_inst.setRange(0, 0)
+
+    def _on_mod_installed(self, mod_name: str, staged_str: str, dirs: list, warns: list) -> None:
+        is_es = self.lang == "es"
+        if staged_str not in self.local_mods:
+            self.local_mods.append(staged_str)
+        self.ps5_mods = list(dirs)
+        self._update_installed_tab_label()
+        self._rebuild_installed_lists()
+        msg = (
+            f"✔  {mod_name} instalado correctamente en tu PS5 (/data/totk-ps5/mods/)."
+            if is_es
+            else f"✔  {mod_name} installed to your PS5 (/data/totk-ps5/mods/)."
+        )
+        if warns:
+            msg += f"  ⚠ {warns[0]}"
+        self.pb_inst.setRange(0, 100)
+        self.pb_inst.setValue(100)
+        self.lbl_inst_stage.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {C_ACCENT};")
+        self.lbl_inst_stage.setText(msg)
+        self.btn_inst_dismiss.show()
+        self.lbl_mods_foot.setText(msg)
+        self.append_log(f"[ok] {msg}\n")
+
+    def _on_mod_install_failed(self, mod_name: str, err: str) -> None:
+        is_es = self.lang == "es"
+        msg = f"✖  Error instalando {mod_name}: {err}" if is_es else f"✖  Failed installing {mod_name}: {err}"
+        self.install_banner.setStyleSheet(
+            f"QFrame#InstallBanner {{ background-color: #211016; border: 1px solid {C_DANGER}; border-radius: 10px; }}"
+        )
+        self.pb_inst.setRange(0, 100)
+        self.pb_inst.setValue(0)
+        self.lbl_inst_stage.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {C_DANGER};")
+        self.lbl_inst_stage.setText(msg)
+        self.btn_inst_dismiss.show()
+        self.lbl_mods_foot.setText(msg)
+        self.append_log(f"[err] {msg}\n")
+        QMessageBox.warning(
+            self,
+            "Error al instalar mod" if is_es else "Mod Install Failed",
+            f"{mod_name}\n\n{err}",
+        )
 
     def _rebuild_installed_lists(self) -> None:
         for host_lay in (self.ps5_mods_host, self.local_mods_host):

@@ -266,15 +266,19 @@ def _slugify(name: str) -> str:
 
 def _find_romfs_root(extracted: Path) -> Path | None:
     """Locate the romfs/ directory (or direct TOTK RomFS subfolder root) inside an extracted mod."""
-    # Direct romfs/ folder anywhere in top 3 levels
+    # Direct romfs/ folder anywhere in archive (shallowest first)
     candidates = sorted(
         (p for p in extracted.rglob("*") if p.is_dir() and p.name.lower() == "romfs"),
         key=lambda p: len(p.parts),
     )
     if candidates:
         return candidates[0]
-    # Otherwise check if extracted root or a single child folder directly contains RomFS markers
-    search_dirs = [extracted] + [p for p in extracted.iterdir() if p.is_dir()]
+    # Otherwise check extracted root and subdirectories up to depth 4 for RomFS markers
+    base_depth = len(extracted.parts)
+    search_dirs = [extracted] + sorted(
+        (p for p in extracted.rglob("*") if p.is_dir() and len(p.parts) - base_depth <= 4),
+        key=lambda p: len(p.parts),
+    )
     for d in search_dirs:
         child_names = {c.name.lower() for c in d.iterdir() if c.is_dir()}
         if child_names & ROMFS_ROOT_MARKERS:
@@ -307,12 +311,14 @@ def download_and_stage_mod(
     mod_name: str,
     mods_root: Path,
     log_fn: Callable[[str], None] | None = None,
+    progress_cb: Callable[[int, int, str], None] | None = None,
 ) -> tuple[Path, list[str]]:
     """Download a GameBanana mod archive, validate its RomFS payload, and stage into mods_root/<slug>/romfs/.
 
     Returns (staged_mod_dir, warnings).
     """
     log = log_fn or (lambda _m: None)
+    prog = progress_cb or (lambda _cur, _tot, _msg: None)
     mods_root.mkdir(parents=True, exist_ok=True)
     slug = _slugify(mod_name)
     warnings: list[str] = []
@@ -320,14 +326,27 @@ def download_and_stage_mod(
     with tempfile.TemporaryDirectory(prefix="totk_gb_") as td:
         tmp = Path(td)
         archive = tmp / gb_file.filename
-        log(f"[gb] Downloading {gb_file.filename} ({gb_file.size_bytes / (1024 * 1024):.2f} MiB)...")
+        total_bytes = max(0, int(gb_file.size_bytes or 0))
+        log(f"[gb] Downloading {gb_file.filename} ({total_bytes / (1024 * 1024):.2f} MiB)...")
+        prog(0, total_bytes, f"Downloading {gb_file.filename}...")
         req = urllib.request.Request(gb_file.download_url, headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(req, timeout=60) as resp, archive.open("wb") as out_f:
-            shutil.copyfileobj(resp, out_f, length=262144)
+        with urllib.request.urlopen(req, timeout=90) as resp, archive.open("wb") as out_f:
+            cl = resp.headers.get("Content-Length")
+            if cl and cl.isdigit():
+                total_bytes = int(cl)
+            done = 0
+            while True:
+                chunk = resp.read(262144)
+                if not chunk:
+                    break
+                out_f.write(chunk)
+                done += len(chunk)
+                prog(done, total_bytes, f"Downloading {gb_file.filename}")
 
         extracted = tmp / "extracted"
         extracted.mkdir()
         log(f"[gb] Extracting {gb_file.filename}...")
+        prog(0, 0, f"Extracting {gb_file.filename}...")
         _extract_archive(archive, extracted)
 
         # Compatibility scan
